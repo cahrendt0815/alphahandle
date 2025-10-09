@@ -6,6 +6,40 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 from dateutil import tz
+from pathlib import Path
+import requests_cache
+import time
+from functools import lru_cache
+
+# ============================================================================
+# Caching Setup
+# ============================================================================
+# See yfinance advanced docs: https://github.com/ranaroussi/yfinance#advanced-usage
+#
+# Cache Strategy:
+# - Historical "entry" prices (EOD data) rarely change → long TTL (30 days)
+# - Latest "latest" prices stabilize after market close → medium TTL (6 hours)
+#
+# Note: Render free tier instances can sleep; disk cache persists while container
+# is alive but may reset on redeploy. This is acceptable for MVP.
+# ============================================================================
+
+CACHE_DIR = Path(__file__).parent / ".cache"
+CACHE_DIR.mkdir(exist_ok=True)
+
+# Historical cache: 30 days TTL
+cache_hist = requests_cache.CachedSession(
+    cache_name=str(CACHE_DIR / "hist_cache"),
+    backend='sqlite',
+    expire_after=86400 * 30  # 30 days
+)
+
+# Latest cache: 6 hours TTL
+cache_latest = requests_cache.CachedSession(
+    cache_name=str(CACHE_DIR / "latest_cache"),
+    backend='sqlite',
+    expire_after=6 * 3600  # 6 hours
+)
 
 app = FastAPI()
 
@@ -25,9 +59,128 @@ app.add_middleware(
 )
 
 
+# ============================================================================
+# Retry/Backoff Helper
+# ============================================================================
+def retry_with_backoff(func, max_retries=4, backoff_delays=[0.5, 1, 2, 4]):
+    """
+    Retry a function with exponential backoff on network errors and 429/5xx.
+
+    Args:
+        func: Callable that returns a value or raises an exception
+        max_retries: Maximum number of attempts (default 4)
+        backoff_delays: List of delays in seconds between retries
+
+    Returns:
+        Result from func() or None if all retries fail
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                time.sleep(delay)
+            else:
+                # All retries exhausted
+                return None
+    return None
+
+
+# ============================================================================
+# Price Fetching with Caching & LRU
+# ============================================================================
+
+@lru_cache(maxsize=512)
+def get_entry_price(symbol: str, date_str: str, tweet_timestamp: str) -> tuple:
+    """
+    Get OPEN price for the next trading day after tweet timestamp.
+
+    Args:
+        symbol: Uppercase ticker symbol
+        date_str: YYYY-MM-DD date string (for cache key)
+        tweet_timestamp: ISO timestamp of tweet
+
+    Returns:
+        (price, asof_date) tuple or (None, None) if unavailable
+    """
+    def fetch():
+        tweet_dt = datetime.fromisoformat(tweet_timestamp.replace('Z', '+00:00'))
+
+        # Use cached session for historical data
+        ticker = yf.Ticker(symbol, session=cache_hist)
+
+        start_date = tweet_dt.date()
+        end_date = start_date + timedelta(days=10)
+
+        hist = ticker.history(start=start_date, end=end_date, auto_adjust=True)
+
+        if hist.empty:
+            return (None, None)
+
+        # Find first trading day after tweet
+        for date, row in hist.iterrows():
+            if date.to_pydatetime().replace(tzinfo=tz.UTC) > tweet_dt:
+                price = float(row['Open'])
+                asof = date.strftime('%Y-%m-%d')
+                return (price, asof)
+
+        return (None, None)
+
+    result = retry_with_backoff(fetch)
+    return result if result else (None, None)
+
+
+@lru_cache(maxsize=512)
+def get_latest_price(symbol: str) -> tuple:
+    """
+    Get CLOSE price of the previous trading day.
+
+    Args:
+        symbol: Uppercase ticker symbol
+
+    Returns:
+        (price, asof_date) tuple or (None, None) if unavailable
+    """
+    def fetch():
+        # Use cached session for latest data
+        ticker = yf.Ticker(symbol, session=cache_latest)
+
+        hist = ticker.history(period="7d", auto_adjust=True)
+
+        if hist.empty or len(hist) < 2:
+            return (None, None)
+
+        # Get second-to-last row (previous trading day close)
+        price = float(hist.iloc[-2]['Close'])
+        asof = hist.index[-2].strftime('%Y-%m-%d')
+        return (price, asof)
+
+    result = retry_with_backoff(fetch)
+    return result if result else (None, None)
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok"}
+    """Health check with optional cache stats."""
+    try:
+        # Get cache stats if available
+        hist_hits = len(cache_hist.cache.responses) if hasattr(cache_hist.cache, 'responses') else 0
+        latest_hits = len(cache_latest.cache.responses) if hasattr(cache_latest.cache, 'responses') else 0
+
+        return {
+            "status": "ok",
+            "cache": {
+                "hist_entries": hist_hits,
+                "latest_entries": latest_hits
+            }
+        }
+    except:
+        return {"status": "ok"}
 
 
 @app.get("/api/dividends")
@@ -43,7 +196,8 @@ def get_dividends(symbol: str, range: str = "5y"):
         List of {date, amount} objects
     """
     try:
-        ticker = yf.Ticker(symbol)
+        symbol = symbol.upper()
+        ticker = yf.Ticker(symbol, session=cache_hist)
         dividends = ticker.dividends
 
         if dividends.empty:
@@ -77,61 +231,14 @@ def get_dividends(symbol: str, range: str = "5y"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class QuoteRequest(BaseModel):
+class PriceRequest(BaseModel):
     symbol: str
-    tweetTimestamp: str  # ISO 8601 format
+    type: str  # "entry" or "latest"
+    tweetTimestamp: Optional[str] = None  # Required for "entry"
 
 
 class BatchQuotesRequest(BaseModel):
-    quotes: List[QuoteRequest]
-
-
-def get_next_trading_day_open(symbol: str, tweet_timestamp: str) -> Optional[float]:
-    """
-    Get the OPEN price of the next US trading day after the tweet timestamp.
-    """
-    try:
-        tweet_dt = datetime.fromisoformat(tweet_timestamp.replace('Z', '+00:00'))
-        ticker = yf.Ticker(symbol)
-
-        # Fetch historical data starting from tweet date
-        start_date = tweet_dt.date()
-        end_date = start_date + timedelta(days=10)  # Look ahead 10 days for next trading day
-
-        hist = ticker.history(start=start_date, end=end_date)
-
-        if hist.empty:
-            return None
-
-        # Get the first trading day after the tweet
-        for date, row in hist.iterrows():
-            if date.to_pydatetime().replace(tzinfo=tz.UTC) > tweet_dt:
-                return float(row['Open'])
-
-        return None
-
-    except Exception:
-        return None
-
-
-def get_previous_trading_day_close(symbol: str) -> Optional[float]:
-    """
-    Get the CLOSE price of the previous trading day.
-    """
-    try:
-        ticker = yf.Ticker(symbol)
-
-        # Fetch last 5 days to ensure we get previous trading day
-        hist = ticker.history(period="5d")
-
-        if hist.empty or len(hist) < 2:
-            return None
-
-        # Get second-to-last row (previous trading day)
-        return float(hist.iloc[-2]['Close'])
-
-    except Exception:
-        return None
+    requests: List[PriceRequest]
 
 
 @app.post("/api/quotes/batch")
@@ -139,44 +246,111 @@ def batch_quotes(request: BatchQuotesRequest):
     """
     Fetch batch quotes with entry and latest prices.
 
-    For each quote:
-    - entry: OPEN price of next US trading day after tweetTimestamp
-    - latest: CLOSE price of previous trading day
+    For each request:
+    - type="entry": OPEN price of next US trading day after tweetTimestamp
+    - type="latest": CLOSE price of previous trading day
 
     Returns:
         {
-            "data": [{"symbol": str, "entry": float, "latest": float}, ...],
-            "errors": [{"symbol": str, "error": str}, ...]
+            "data": [{
+                "symbol": str,
+                "type": "entry" | "latest",
+                "date": "YYYY-MM-DD" | null,
+                "price": float | null,
+                "asof": "YYYY-MM-DD" | null
+            }, ...],
+            "errors": [{"message": str, "symbol": str, "type": str}, ...]
         }
     """
     data = []
     errors = []
 
-    for quote_req in request.quotes:
-        try:
-            symbol = quote_req.symbol
-            tweet_timestamp = quote_req.tweetTimestamp
+    # De-duplicate requests by (symbol, type, date)
+    unique_requests = {}
+    for req in request.requests:
+        symbol = req.symbol.upper()
+        req_type = req.type.lower()
 
-            entry_price = get_next_trading_day_open(symbol, tweet_timestamp)
-            latest_price = get_previous_trading_day_close(symbol)
-
-            if entry_price is None or latest_price is None:
+        if req_type == "entry":
+            if not req.tweetTimestamp:
                 errors.append({
+                    "message": "tweetTimestamp required for entry type",
                     "symbol": symbol,
-                    "error": "Could not fetch entry or latest price"
+                    "type": req_type
                 })
                 continue
 
-            data.append({
-                "symbol": symbol,
-                "entry": entry_price,
-                "latest": latest_price
-            })
+            # Normalize to date for deduplication
+            date_key = datetime.fromisoformat(req.tweetTimestamp.replace('Z', '+00:00')).date().isoformat()
+            key = (symbol, "entry", date_key)
+
+            if key not in unique_requests:
+                unique_requests[key] = {
+                    "symbol": symbol,
+                    "type": "entry",
+                    "tweetTimestamp": req.tweetTimestamp,
+                    "date_key": date_key
+                }
+
+        elif req_type == "latest":
+            key = (symbol, "latest", None)
+
+            if key not in unique_requests:
+                unique_requests[key] = {
+                    "symbol": symbol,
+                    "type": "latest"
+                }
+
+    # Process unique requests
+    for key, req_data in unique_requests.items():
+        symbol = req_data["symbol"]
+        req_type = req_data["type"]
+
+        try:
+            if req_type == "entry":
+                date_key = req_data["date_key"]
+                tweet_timestamp = req_data["tweetTimestamp"]
+
+                price, asof = get_entry_price(symbol, date_key, tweet_timestamp)
+
+                if price is None:
+                    errors.append({
+                        "message": "Could not fetch entry price",
+                        "symbol": symbol,
+                        "type": "entry"
+                    })
+                else:
+                    data.append({
+                        "symbol": symbol,
+                        "type": "entry",
+                        "date": asof,
+                        "price": price,
+                        "asof": asof
+                    })
+
+            elif req_type == "latest":
+                price, asof = get_latest_price(symbol)
+
+                if price is None:
+                    errors.append({
+                        "message": "Could not fetch latest price",
+                        "symbol": symbol,
+                        "type": "latest"
+                    })
+                else:
+                    data.append({
+                        "symbol": symbol,
+                        "type": "latest",
+                        "date": None,
+                        "price": price,
+                        "asof": asof
+                    })
 
         except Exception as e:
             errors.append({
-                "symbol": quote_req.symbol,
-                "error": str(e)
+                "message": str(e),
+                "symbol": symbol,
+                "type": req_type
             })
 
     return {

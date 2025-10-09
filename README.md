@@ -49,6 +49,12 @@ npm run dev:full
 
 The FastAPI server provides real-time and historical market data via yfinance.
 
+**Caching enabled** (`requests_cache`):
+- Historical entry prices: 30-day TTL
+- Latest prices: 6-hour TTL
+- In-process LRU cache (512 items) for hot data
+- Retry with exponential backoff (4 attempts)
+
 ### Configuration
 
 **Local development:**
