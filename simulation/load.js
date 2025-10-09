@@ -1,6 +1,6 @@
 /**
  * load.js - Aggregate recommendations and upsert to Supabase
- * Reads normalized_recommendations.jsonl, calculates metrics, uploads to DB
+ * Reads normalized_recommendations.jsonl, fetches REAL market data from FastAPI, uploads to DB
  */
 
 const fs = require('fs');
@@ -11,45 +11,118 @@ const { createClient } = require('@supabase/supabase-js');
 
 const INPUT_NORMALIZED = path.join(__dirname, '../out/normalized_recommendations.jsonl');
 const HANDLE = 'abc'; // Simulation handle
+const API_BASE = process.env.MARKET_BASE_URL || 'https://alphahandle-api2.onrender.com';
 
 // Initialize Supabase client
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+// Try multiple env variable formats
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ||
+                     process.env.SUPABASE_URL ||
+                     'https://vjapeusemdciohsvnelx.supabase.co';
+const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+                     process.env.SUPABASE_ANON_KEY ||
+                     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqYXBldXNlbWRjaW9oc3ZuZWx4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzNDI4OTgsImV4cCI6MjA3NDkxODg5OH0.3p1cgqkSarLjj5Isb4fJ5lylMeVE618JUqG6hXdESgU';
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error('[Load] ❌ Error: EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY must be set in .env');
+  console.error('[Load] ❌ Error: Supabase credentials not found in environment');
   process.exit(1);
 }
+
+console.log('[Load] Using Supabase URL:', supabaseUrl);
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
- * Simulate stock returns for a ticker (for testing)
- * In production, this would fetch real market data
+ * Fetch real market data from FastAPI backend
  */
-function simulateReturns(ticker, entryPrice, mentionedDate) {
-  // Generate random returns for simulation
-  // Positive bias for "long", negative bias for "short"
-  const randomReturn = (Math.random() - 0.3) * 30; // -9% to +21%
+async function fetchMarketData(recommendations) {
+  console.log('[Load] Fetching real market data from FastAPI...');
 
-  const currentPrice = entryPrice ? entryPrice * (1 + randomReturn / 100) : null;
-  const percentReturn = randomReturn;
+  // Build batch request for all tickers (entry + latest prices + SPY benchmark)
+  const requests = [];
 
-  return {
-    current_price: currentPrice,
-    percent_return: percentReturn,
-    dollar_return: entryPrice ? (currentPrice - entryPrice) : null,
-  };
+  for (const rec of recommendations) {
+    // Entry price: OPEN on next trading day after tweet
+    requests.push({
+      symbol: rec.ticker,
+      type: 'entry',
+      tweetTimestamp: rec.mentioned_at
+    });
+
+    // Latest price: CLOSE on previous trading day
+    requests.push({
+      symbol: rec.ticker,
+      type: 'latest'
+    });
+  }
+
+  // Add SPY benchmark for each recommendation (for alpha calculation)
+  for (const rec of recommendations) {
+    requests.push({
+      symbol: 'SPY',
+      type: 'entry',
+      tweetTimestamp: rec.mentioned_at
+    });
+  }
+  requests.push({ symbol: 'SPY', type: 'latest' });
+
+  console.log(`[Load] Requesting prices for ${requests.length} data points...`);
+
+  try {
+    const response = await fetch(`${API_BASE}/api/quotes/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log(`[Load] ✅ Received ${result.data.length} prices, ${result.errors.length} errors`);
+
+    if (result.errors.length > 0) {
+      console.warn('[Load] ⚠️  Some prices failed to fetch:');
+      result.errors.slice(0, 3).forEach(err => {
+        console.warn(`  - ${err.symbol} (${err.type}): ${err.message}`);
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error('[Load] ❌ Failed to fetch market data:', error.message);
+    throw error;
+  }
 }
 
 /**
- * Aggregate recommendations into analysis metrics
- * Matches the exact format expected by the app (from mockProvider.js)
+ * Index market data by symbol+type for quick lookup
  */
-function aggregateRecommendations(recommendations) {
+function indexMarketData(marketData) {
+  const index = new Map();
+
+  for (const item of marketData.data) {
+    const key = `${item.symbol.toUpperCase()}|${item.type}|${item.date || 'null'}`;
+    index.set(key, item);
+  }
+
+  return index;
+}
+
+/**
+ * Aggregate recommendations with REAL market data
+ */
+async function aggregateRecommendations(recommendations) {
+  // Fetch real market data
+  const marketData = await fetchMarketData(recommendations);
+  const priceIndex = indexMarketData(marketData);
+
+  // Get SPY latest for benchmark
+  const spyLatestKey = `SPY|latest|null`;
+  const spyLatest = priceIndex.get(spyLatestKey);
+
   // Group by ticker
   const byTicker = {};
-
   for (const rec of recommendations) {
     if (!byTicker[rec.ticker]) {
       byTicker[rec.ticker] = [];
@@ -57,43 +130,65 @@ function aggregateRecommendations(recommendations) {
     byTicker[rec.ticker].push(rec);
   }
 
-  // Calculate returns for each ticker (create recentTrades array)
+  // Calculate returns for each ticker
   const trades = [];
+
   for (const [ticker, recs] of Object.entries(byTicker)) {
-    // Use first mention for this ticker
     const firstMention = recs[0];
+    const mentionDate = firstMention.mentioned_at.split('T')[0];
 
-    // Simulate returns
-    const returns = simulateReturns(
-      ticker,
-      firstMention.entry_price,
-      firstMention.mentioned_at
-    );
+    // Lookup entry and latest prices
+    const entryKey = `${ticker.toUpperCase()}|entry|${mentionDate}`;
+    const latestKey = `${ticker.toUpperCase()}|latest|null`;
 
-    const beginningValue = firstMention.entry_price || 100;
-    const lastValue = returns.current_price || beginningValue * (1 + returns.percent_return / 100);
-    const stockReturn = returns.percent_return;
+    const entryData = priceIndex.get(entryKey);
+    const latestData = priceIndex.get(latestKey);
 
-    // Calculate alpha (stock return vs SPY benchmark - assume 1.5% SPY return for simulation)
-    const spyReturn = 1.5;
+    // Lookup SPY entry for this same date (for alpha calculation)
+    const spyEntryKey = `SPY|entry|${mentionDate}`;
+    const spyEntry = priceIndex.get(spyEntryKey);
+
+    if (!entryData || !latestData || !spyEntry || !spyLatest) {
+      console.warn(`[Load] ⚠️  Missing price data for ${ticker}, skipping...`);
+      continue;
+    }
+
+    const beginningValue = entryData.price;
+    const lastValue = latestData.price;
+    const stockReturn = ((lastValue - beginningValue) / beginningValue) * 100;
+
+    // Calculate SPY return for same period
+    const spyBegin = spyEntry.price;
+    const spyEnd = spyLatest.price;
+    const spyReturn = ((spyEnd - spyBegin) / spyBegin) * 100;
+
+    // Alpha = stock return - SPY return
     const alphaVsSPY = stockReturn - spyReturn;
 
     const trade = {
-      ticker: `$${ticker}`,  // Add $ prefix
-      company: `${ticker} Inc.`,  // Add Inc. suffix
-      dateMentioned: firstMention.mentioned_at.split('T')[0],  // Just the date part
+      ticker: `$${ticker}`,
+      company: `${ticker} Inc.`,
+      dateMentioned: mentionDate,
       beginningValue: Math.round(beginningValue * 100) / 100,
       lastValue: Math.round(lastValue * 100) / 100,
       dividends: 0,
       adjLastValue: Math.round(lastValue * 100) / 100,
-      stockReturn: Math.round(stockReturn * 10) / 10,  // Round to 1 decimal
+      stockReturn: Math.round(stockReturn * 10) / 10,
       alphaVsSPY: Math.round(alphaVsSPY * 10) / 10,
       hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
-      tweetUrl: `https://x.com/${HANDLE}/status/${Math.floor(Math.random() * 9000000000 + 1000000000)}`
+      tweetUrl: `https://x.com/${HANDLE}/status/${Math.floor(Math.random() * 9000000000 + 1000000000)}`,
+      asofEntry: entryData.asof,
+      asofLatest: latestData.asof
     };
 
     trades.push(trade);
   }
+
+  if (trades.length === 0) {
+    throw new Error('No trades with valid market data. Check API connectivity.');
+  }
+
+  console.log(`[Load] ✅ Processed ${trades.length} trades with real market data`);
 
   // Calculate aggregate metrics
   const totalCalls = trades.length;
@@ -105,7 +200,7 @@ function aggregateRecommendations(recommendations) {
 
   const wins = trades.filter(t => t.stockReturn > 0).length;
   const winRate = Math.round((wins / totalCalls) * 100 * 10) / 10;
-  const hitRatio = winRate;  // Same as winRate for our simulation
+  const hitRatio = winRate;
 
   // Best and worst trades
   const sortedTrades = [...trades].sort((a, b) => b.stockReturn - a.stockReturn);
@@ -120,7 +215,6 @@ function aggregateRecommendations(recommendations) {
     date: sortedTrades[sortedTrades.length - 1].dateMentioned
   };
 
-  // Return analysis in DATABASE format (will be transformed by supabaseClient)
   return {
     handle: HANDLE,
     avg_return: avgReturn,
@@ -130,7 +224,7 @@ function aggregateRecommendations(recommendations) {
     best_trade: bestTrade,
     worst_trade: worstTrade,
     last_updated: new Date().toISOString(),
-    recent_recommendations: trades,  // Will be transformed to recentTrades by supabaseClient
+    recent_recommendations: trades,
   };
 }
 
@@ -165,6 +259,11 @@ async function upsertAnalysis(analysis) {
  * Main load pipeline
  */
 async function main() {
+  console.log('[Load] ===============================================');
+  console.log('[Load] Loading simulation with REAL market data');
+  console.log('[Load] API Base:', API_BASE);
+  console.log('[Load] ===============================================\n');
+
   console.log('[Load] Reading normalized recommendations:', INPUT_NORMALIZED);
 
   if (!fs.existsSync(INPUT_NORMALIZED)) {
@@ -179,17 +278,17 @@ async function main() {
     .filter(line => line.trim());
 
   const recommendations = lines.map(line => JSON.parse(line));
-  console.log(`[Load] Found ${recommendations.length} recommendations`);
+  console.log(`[Load] Found ${recommendations.length} recommendations\n`);
 
-  // Aggregate into analysis metrics
-  console.log('[Load] Aggregating metrics...');
-  const analysis = aggregateRecommendations(recommendations);
+  // Aggregate with real market data
+  console.log('[Load] Aggregating metrics with real market data...');
+  const analysis = await aggregateRecommendations(recommendations);
 
   // Upsert to Supabase
   await upsertAnalysis(analysis);
 
-  console.log('\n[Load] ✅ Complete! Analysis loaded into Supabase.');
-  console.log(`[Load] You can now search for handle "@${HANDLE}" in your app!`);
+  console.log('\n[Load] ✅ Complete! Analysis with REAL market data loaded into Supabase.');
+  console.log(`[Load] Search for handle "@${HANDLE}" in the Portal to see live financial data!`);
 }
 
 // Run load pipeline
