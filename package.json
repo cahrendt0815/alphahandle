@@ -14,7 +14,8 @@
     "sim:extract": "node simulation/extract.js && node simulation/normalize.js",
     "sim:load": "node simulation/load.js",
     "sim:all": "npm run sim:extract && npm run sim:load",
-    "api:dev": "uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir server"
+    "api:dev": "uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir server",
+    "test:prices": "tsx scripts/test-prices.ts"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.17",
@@ -39,7 +40,10 @@
     "stripe": "^19.0.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@types/react": "~19.1.10",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.2"
   },
   "private": true
 }

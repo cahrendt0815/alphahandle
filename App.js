@@ -3,6 +3,8 @@ import { Platform, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { setMarketBaseUrl } from './lib/marketClient';
+import { MARKET_BASE_URL } from './lib/appEnv';
 import HomeScreen from './screens/HomeScreen';
 import ResultsScreen from './screens/ResultsScreen';
 import PlanSelectionScreen from './screens/PlanSelectionScreen';
@@ -17,6 +19,10 @@ import AccountScreen from './screens/AccountScreen';
 import PortalScreen from './screens/PortalScreen';
 
 const Stack = createStackNavigator();
+
+// Initialize market API base URL
+setMarketBaseUrl(MARKET_BASE_URL);
+console.log("Using market API at", MARKET_BASE_URL);
 
 function AppNavigator() {
   const { isHandlingRedirect, loading } = useAuth();
