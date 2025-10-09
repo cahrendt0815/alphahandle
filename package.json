@@ -13,7 +13,8 @@
     "dev:full": "concurrently \"npm run server\" \"npm run webhooks\" \"npx expo start --web --port 8083\"",
     "sim:extract": "node simulation/extract.js && node simulation/normalize.js",
     "sim:load": "node simulation/load.js",
-    "sim:all": "npm run sim:extract && npm run sim:load"
+    "sim:all": "npm run sim:extract && npm run sim:load",
+    "api:dev": "uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir server"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.17",
