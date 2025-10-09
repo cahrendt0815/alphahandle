@@ -1,42 +1,37 @@
 // lib/metrics.ts
-export function computeReturn(stance: "long" | "short", entry: number, latest: number): number {
-  if (!isFinite(entry) || !isFinite(latest) || entry <= 0 || latest <= 0) return NaN;
-  return stance === "long" ? latest / entry - 1 : entry / latest - 1;
+export function computeReturn(stance: 'long'|'short', entry: number, latest: number) {
+  if (!isFinite(entry) || !isFinite(latest) || entry <= 0 || latest <= 0) return null;
+  return stance === 'long' ? (latest / entry) - 1 : (entry / latest) - 1;
 }
 
-export function computeAlpha(ret: number, spyRet: number): number {
-  if (!isFinite(ret) || !isFinite(spyRet)) return NaN;
+export function computeAlpha(ret: number|null, spyRet: number|null) {
+  if (ret == null || spyRet == null) return null;
   return ret - spyRet;
 }
 
-export function aggregateMetrics(records: { ret: number; alpha: number }[]) {
-  const valid = records.filter(r => Number.isFinite(r.ret));
-  const arr = <T extends number>(xs: T[]) => xs.filter(Number.isFinite) as number[];
-  const rets = arr(valid.map(r => r.ret));
-  const alphas = arr(valid.map(r => r.alpha));
+export function median(nums: number[]) {
+  const a = nums.slice().sort((x,y)=>x-y);
+  const n = a.length; if (!n) return null;
+  return n % 2 ? a[(n-1)/2] : (a[n/2-1] + a[n/2]) / 2;
+}
 
-  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-  const median = (xs: number[]) => {
-    if (!xs.length) return 0;
-    const s = [...xs].sort((a, b) => a - b);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-  };
+export function summarize(list: Array<{ret: number|null, alpha: number|null}>) {
+  const rets = list.map(x=>x.ret).filter((x): x is number => x!=null);
+  const alphas = list.map(x=>x.alpha).filter((x): x is number => x!=null);
 
-  const best = rets.length ? Math.max(...rets) : 0;
-  const worst = rets.length ? Math.min(...rets) : 0;
-  const winRate = rets.length ? rets.filter(r => r > 0).length / rets.length : 0;
-  const beatsSpyRate = alphas.length ? alphas.filter(a => a > 0).length / alphas.length : 0;
+  const avg = (arr: number[]) => arr.length ? arr.reduce((s,v)=>s+v,0)/arr.length : null;
+  const winRate = rets.length ? rets.filter(r => r>0).length / rets.length : null;
+  const beatsSpy = alphas.length ? alphas.filter(a => a>0).length / alphas.length : null;
 
   return {
+    sampleSize: list.length,
     avgReturn: avg(rets),
     medianReturn: median(rets),
     winRate,
-    best,
-    worst,
+    best: rets.length ? Math.max(...rets) : null,
+    worst: rets.length ? Math.min(...rets) : null,
     avgAlpha: avg(alphas),
     medianAlpha: median(alphas),
-    beatsSpyRate,
-    sampleSize: rets.length,
+    beatsSpyRate: beatsSpy
   };
 }

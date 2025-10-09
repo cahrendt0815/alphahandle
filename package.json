@@ -15,7 +15,8 @@
     "sim:load": "node simulation/load.js",
     "sim:all": "npm run sim:extract && npm run sim:load",
     "api:dev": "uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir server",
-    "test:prices": "tsx scripts/test-prices.ts"
+    "test:prices": "tsx scripts/test-prices.ts",
+    "prices:test": "tsx scripts/test-prices.ts"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.17",
