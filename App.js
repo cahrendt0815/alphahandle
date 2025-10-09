@@ -17,6 +17,7 @@ import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import AccountScreen from './screens/AccountScreen';
 import PortalScreen from './screens/PortalScreen';
+import HealthAndAAPL from './screens/HealthAndAAPL';
 
 const Stack = createStackNavigator();
 
@@ -66,6 +67,7 @@ function AppNavigator() {
         <Stack.Screen name="PaySuccess" component={PaySuccessScreen} />
         <Stack.Screen name="PayCancel" component={PayCancelScreen} />
         <Stack.Screen name="AuthReset" component={AuthResetScreen} />
+        <Stack.Screen name="HealthAndAAPL" component={HealthAndAAPL} />
       </Stack.Navigator>
     </>
   );

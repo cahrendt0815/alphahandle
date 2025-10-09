@@ -141,6 +141,12 @@ export default function HomeScreen({ navigation }) {
                   <Text style={styles.navLinkText}>FAQ</Text>
                 </Pressable>
               </View>
+              <Pressable
+                onPress={() => navigation.navigate('HealthAndAAPL')}
+                style={styles.navLink}
+              >
+                <Text style={styles.navLinkText}>API Test</Text>
+              </Pressable>
               {user ? (
                 <>
                   <TextLink onPress={async () => {
