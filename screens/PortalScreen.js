@@ -590,15 +590,12 @@ export default function PortalScreen({ navigation, route }) {
                     <View style={styles.resultsTableHeader}>
                       <Text style={[styles.tableHeaderText, styles.colTicker]}>Ticker</Text>
                       <Text style={[styles.tableHeaderText, styles.colCompany]}>Company</Text>
-                      <Text style={[styles.tableHeaderText, styles.colDate]}>Date</Text>
+                      <Text style={[styles.tableHeaderText, styles.colDate]}>DATE POST</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colValue]}>Begin</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colValue]}>Last</Text>
-                      <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colDividend]}>Div</Text>
-                      <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colValue]}>Adj Last</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colReturn]}>Return</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colReturn]}>Alpha</Text>
                       <Text style={[styles.tableHeaderText, styles.colHit]}>Hit/Miss</Text>
-                      <Text style={[styles.tableHeaderText, styles.colTweet]}>🔗</Text>
                     </View>
 
                     {/* Clear Table Row */}
@@ -614,18 +611,17 @@ export default function PortalScreen({ navigation, route }) {
                           {trade.ticker}
                         </Text>
                         <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                        <Text style={[styles.tableCell, styles.colDate]}>{trade.dateMentioned}</Text>
+                        <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                          <Text>{trade.dateMentioned}</Text>
+                          <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
+                            <Text style={{ fontSize: 14, color: '#007AFF' }}>↗</Text>
+                          </TouchableOpacity>
+                        </View>
                         <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                           ${trade.beginningValue.toFixed(0)}
                         </Text>
                         <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                           ${trade.lastValue.toFixed(0)}
-                        </Text>
-                        <Text style={[styles.tableCell, styles.numericCell, styles.colDividend]}>
-                          ${trade.dividends.toFixed(2)}
-                        </Text>
-                        <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                          ${trade.adjLastValue.toFixed(0)}
                         </Text>
                         <Text style={[
                           styles.tableCell,
@@ -650,12 +646,6 @@ export default function PortalScreen({ navigation, route }) {
                         ]}>
                           {trade.hitOrMiss}
                         </Text>
-                        <TouchableOpacity
-                          style={[styles.tweetLinkCell, styles.colTweet]}
-                          onPress={() => Linking.openURL(trade.tweetUrl)}
-                        >
-                          <Text style={styles.tweetLinkIcon}>🔗</Text>
-                        </TouchableOpacity>
                       </View>
                     ))}
 
@@ -676,18 +666,17 @@ export default function PortalScreen({ navigation, route }) {
                               {trade.ticker}
                             </Text>
                             <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                            <Text style={[styles.tableCell, styles.colDate]}>{trade.dateMentioned}</Text>
+                            <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                              <Text>{trade.dateMentioned}</Text>
+                              <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
+                                <Text style={{ fontSize: 14, color: '#007AFF' }}>↗</Text>
+                              </TouchableOpacity>
+                            </View>
                             <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                               ${trade.beginningValue.toFixed(0)}
                             </Text>
                             <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                               ${trade.lastValue.toFixed(0)}
-                            </Text>
-                            <Text style={[styles.tableCell, styles.numericCell, styles.colDividend]}>
-                              ${trade.dividends.toFixed(2)}
-                            </Text>
-                            <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                              ${trade.adjLastValue.toFixed(0)}
                             </Text>
                             <Text style={[
                               styles.tableCell,
@@ -712,12 +701,6 @@ export default function PortalScreen({ navigation, route }) {
                             ]}>
                               {trade.hitOrMiss}
                             </Text>
-                            <TouchableOpacity
-                              style={[styles.tweetLinkCell, styles.colTweet]}
-                              onPress={() => Linking.openURL(trade.tweetUrl)}
-                            >
-                              <Text style={styles.tweetLinkIcon}>🔗</Text>
-                            </TouchableOpacity>
                           </View>
                         ))}
 
@@ -737,18 +720,17 @@ export default function PortalScreen({ navigation, route }) {
                                 {trade.ticker}
                               </Text>
                               <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                              <Text style={[styles.tableCell, styles.colDate]}>{trade.dateMentioned}</Text>
+                              <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                                <Text>{trade.dateMentioned}</Text>
+                                <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
+                                  <Text style={{ fontSize: 14, color: '#007AFF' }}>↗</Text>
+                                </TouchableOpacity>
+                              </View>
                               <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                                 ${trade.beginningValue.toFixed(0)}
                               </Text>
                               <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
                                 ${trade.lastValue.toFixed(0)}
-                              </Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.colDividend]}>
-                                ${trade.dividends.toFixed(2)}
-                              </Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                                ${trade.adjLastValue.toFixed(0)}
                               </Text>
                               <Text style={[
                                 styles.tableCell,
@@ -773,12 +755,6 @@ export default function PortalScreen({ navigation, route }) {
                               ]}>
                                 {trade.hitOrMiss}
                               </Text>
-                              <TouchableOpacity
-                                style={[styles.tweetLinkCell, styles.colTweet]}
-                                onPress={() => Linking.openURL(trade.tweetUrl)}
-                              >
-                                <Text style={styles.tweetLinkIcon}>🔗</Text>
-                              </TouchableOpacity>
                             </View>
                           ))}
 
