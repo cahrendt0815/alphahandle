@@ -11,7 +11,8 @@ const { createClient } = require('@supabase/supabase-js');
 
 const INPUT_NORMALIZED = path.join(__dirname, '../out/normalized_recommendations.jsonl');
 const HANDLE = 'abc'; // Simulation handle
-const API_BASE = process.env.MARKET_BASE_URL || 'https://alphahandle-api2.onrender.com';
+const EODHD_API_TOKEN = '68e8d3117def78.19109345';
+const EODHD_BASE_URL = 'https://eodhd.com/api';
 
 // Initialize Supabase client
 // Try multiple env variable formats
@@ -32,94 +33,134 @@ console.log('[Load] Using Supabase URL:', supabaseUrl);
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
- * Fetch real market data from FastAPI backend
+ * Normalize symbol to EODHD format (e.g., AAPL -> AAPL.US)
  */
-async function fetchMarketData(recommendations) {
-  console.log('[Load] Fetching real market data from FastAPI...');
-
-  // Build batch request for all tickers (entry + latest prices + SPY benchmark)
-  const requests = [];
-
-  for (const rec of recommendations) {
-    // Entry price: OPEN on next trading day after tweet
-    requests.push({
-      symbol: rec.ticker,
-      type: 'entry',
-      tweetTimestamp: rec.mentioned_at
-    });
-
-    // Latest price: CLOSE on previous trading day
-    requests.push({
-      symbol: rec.ticker,
-      type: 'latest'
-    });
+function normalizeSymbol(symbol) {
+  symbol = symbol.toUpperCase().trim();
+  if (!symbol.includes('.')) {
+    symbol = `${symbol}.US`;
   }
+  return symbol;
+}
 
-  // Add SPY benchmark for each recommendation (for alpha calculation)
-  for (const rec of recommendations) {
-    requests.push({
-      symbol: 'SPY',
-      type: 'entry',
-      tweetTimestamp: rec.mentioned_at
-    });
-  }
-  requests.push({ symbol: 'SPY', type: 'latest' });
+/**
+ * Fetch entry price from EODHD (OPEN on next trading day after tweet)
+ */
+async function fetchEntryPrice(symbol, tweetTimestamp) {
+  const tweetDate = new Date(tweetTimestamp);
+  const startDate = tweetDate.toISOString().split('T')[0];
+  const endDate = new Date(tweetDate.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  console.log(`[Load] Requesting prices for ${requests.length} data points...`);
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const url = `${EODHD_BASE_URL}/eod/${normalizedSymbol}?api_token=${EODHD_API_TOKEN}&from=${startDate}&to=${endDate}&fmt=json`;
 
   try {
-    const response = await fetch(`${API_BASE}/api/quotes/batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests })
-    });
-
+    const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`API returned ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    const result = await response.json();
-    console.log(`[Load] ✅ Received ${result.data.length} prices, ${result.errors.length} errors`);
-
-    if (result.errors.length > 0) {
-      console.warn('[Load] ⚠️  Some prices failed to fetch:');
-      result.errors.slice(0, 3).forEach(err => {
-        console.warn(`  - ${err.symbol} (${err.type}): ${err.message}`);
-      });
+    const data = await response.json();
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return { price: null, asof: null };
     }
 
-    return result;
+    // Find first trading day after tweet
+    for (const row of data) {
+      const tradeDate = new Date(row.date + 'T00:00:00Z');
+      if (tradeDate > tweetDate) {
+        return {
+          price: parseFloat(row.open),
+          asof: row.date
+        };
+      }
+    }
+
+    return { price: null, asof: null };
   } catch (error) {
-    console.error('[Load] ❌ Failed to fetch market data:', error.message);
-    throw error;
+    console.warn(`  Failed to fetch entry price for ${symbol}: ${error.message}`);
+    return { price: null, asof: null };
   }
 }
 
 /**
- * Index market data by symbol+type for quick lookup
+ * Fetch latest price from EODHD (real-time API)
  */
-function indexMarketData(marketData) {
-  const index = new Map();
+async function fetchLatestPrice(symbol) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const url = `${EODHD_BASE_URL}/real-time/${normalizedSymbol}?api_token=${EODHD_API_TOKEN}&fmt=json`;
 
-  for (const item of marketData.data) {
-    const key = `${item.symbol.toUpperCase()}|${item.type}|${item.date || 'null'}`;
-    index.set(key, item);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data || !data.close) {
+      return { price: null, asof: null };
+    }
+
+    const price = parseFloat(data.close);
+    const asof = data.timestamp
+      ? new Date(data.timestamp * 1000).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+
+    return { price, asof };
+  } catch (error) {
+    console.warn(`  Failed to fetch latest price for ${symbol}: ${error.message}`);
+    return { price: null, asof: null };
+  }
+}
+
+/**
+ * Fetch real market data from EODHD API
+ */
+async function fetchMarketData(recommendations) {
+  console.log('[Load] Fetching real market data from EODHD API...');
+
+  const priceMap = new Map();
+
+  // Fetch entry prices
+  for (const rec of recommendations) {
+    const { price, asof } = await fetchEntryPrice(rec.ticker, rec.mentioned_at);
+    priceMap.set(`${rec.ticker}|entry|${rec.mentioned_at}`, { price, asof });
   }
 
-  return index;
+  // Fetch latest prices (deduplicate by symbol)
+  const uniqueSymbols = [...new Set(recommendations.map(r => r.ticker))];
+  for (const symbol of uniqueSymbols) {
+    const { price, asof } = await fetchLatestPrice(symbol);
+    priceMap.set(`${symbol}|latest`, { price, asof });
+  }
+
+  // Fetch SPY benchmark
+  const spyEntryPrices = new Map();
+  for (const rec of recommendations) {
+    if (!spyEntryPrices.has(rec.mentioned_at)) {
+      const { price, asof } = await fetchEntryPrice('SPY', rec.mentioned_at);
+      spyEntryPrices.set(rec.mentioned_at, { price, asof });
+      priceMap.set(`SPY|entry|${rec.mentioned_at}`, { price, asof });
+    }
+  }
+
+  const spyLatest = await fetchLatestPrice('SPY');
+  priceMap.set('SPY|latest', spyLatest);
+
+  console.log(`[Load] ✅ Fetched prices for ${priceMap.size} data points`);
+
+  return priceMap;
 }
 
 /**
  * Aggregate recommendations with REAL market data
  */
 async function aggregateRecommendations(recommendations) {
-  // Fetch real market data
-  const marketData = await fetchMarketData(recommendations);
-  const priceIndex = indexMarketData(marketData);
+  // Fetch real market data (returns Map)
+  const priceMap = await fetchMarketData(recommendations);
 
   // Get SPY latest for benchmark
-  const spyLatestKey = `SPY|latest|null`;
-  const spyLatest = priceIndex.get(spyLatestKey);
+  const spyLatest = priceMap.get('SPY|latest');
 
   // Group by ticker
   const byTicker = {};
@@ -135,20 +176,21 @@ async function aggregateRecommendations(recommendations) {
 
   for (const [ticker, recs] of Object.entries(byTicker)) {
     const firstMention = recs[0];
-    const mentionDate = firstMention.mentioned_at.split('T')[0];
 
     // Lookup entry and latest prices
-    const entryKey = `${ticker.toUpperCase()}|entry|${mentionDate}`;
-    const latestKey = `${ticker.toUpperCase()}|latest|null`;
+    const entryKey = `${ticker}|entry|${firstMention.mentioned_at}`;
+    const latestKey = `${ticker}|latest`;
 
-    const entryData = priceIndex.get(entryKey);
-    const latestData = priceIndex.get(latestKey);
+    const entryData = priceMap.get(entryKey);
+    const latestData = priceMap.get(latestKey);
 
     // Lookup SPY entry for this same date (for alpha calculation)
-    const spyEntryKey = `SPY|entry|${mentionDate}`;
-    const spyEntry = priceIndex.get(spyEntryKey);
+    const spyEntryKey = `SPY|entry|${firstMention.mentioned_at}`;
+    const spyEntry = priceMap.get(spyEntryKey);
 
-    if (!entryData || !latestData || !spyEntry || !spyLatest) {
+    if (!entryData || !latestData || !spyEntry || !spyLatest ||
+        entryData.price === null || latestData.price === null ||
+        spyEntry.price === null || spyLatest.price === null) {
       console.warn(`[Load] ⚠️  Missing price data for ${ticker}, skipping...`);
       continue;
     }
@@ -168,7 +210,7 @@ async function aggregateRecommendations(recommendations) {
     const trade = {
       ticker: `$${ticker}`,
       company: `${ticker} Inc.`,
-      dateMentioned: mentionDate,
+      dateMentioned: firstMention.mentioned_at.split('T')[0],
       beginningValue: Math.round(beginningValue * 100) / 100,
       lastValue: Math.round(lastValue * 100) / 100,
       dividends: 0,
