@@ -615,7 +615,7 @@ export default function PortalScreen({ navigation, route }) {
                         <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
                           <Text>{trade.dateMentioned}</Text>
                           <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
-                            <ExternalLinkIcon size={14} color="#007AFF" />
+                            <ExternalLinkIcon size={14} color="#000000" />
                           </TouchableOpacity>
                         </View>
                         <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
