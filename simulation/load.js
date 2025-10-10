@@ -207,30 +207,18 @@ async function aggregateRecommendations(recommendations) {
       continue;
     }
 
-    // Use unadjusted prices for display
-    const beginningValue = entryData.price;
-    const lastValue = latestData.price;
-
-    // Use adjusted prices for return calculations (includes dividends)
-    const adjBeginning = entryData.adjPrice;
-    const adjLast = latestData.adjPrice;
-    const stockReturn = ((adjLast - adjBeginning) / adjBeginning) * 100;
-
-    // Calculate dividends as the difference between adjusted and unadjusted returns
-    const unadjReturn = ((lastValue - beginningValue) / beginningValue) * 100;
-    const dividendContribution = stockReturn - unadjReturn;
-    const dividendsPerShare = (dividendContribution / 100) * beginningValue;
+    // Use adjusted prices (includes dividends automatically)
+    const beginningValue = entryData.adjPrice;
+    const lastValue = latestData.adjPrice;
+    const stockReturn = ((lastValue - beginningValue) / beginningValue) * 100;
 
     // Calculate SPY return with dividends (adjusted prices)
-    const spyAdjBegin = spyEntry.adjPrice;
-    const spyAdjEnd = spyLatest.adjPrice;
-    const spyReturn = ((spyAdjEnd - spyAdjBegin) / spyAdjBegin) * 100;
+    const spyBegin = spyEntry.adjPrice;
+    const spyEnd = spyLatest.adjPrice;
+    const spyReturn = ((spyEnd - spyBegin) / spyBegin) * 100;
 
     // Alpha = stock return - SPY return (both with dividends reinvested)
     const alphaVsSPY = stockReturn - spyReturn;
-
-    // Adjusted last value = last stock price + dividends received
-    const adjLastValue = lastValue + dividendsPerShare;
 
     const trade = {
       ticker: `$${ticker}`,
@@ -238,8 +226,8 @@ async function aggregateRecommendations(recommendations) {
       dateMentioned: firstMention.mentioned_at.split('T')[0],
       beginningValue: Math.round(beginningValue * 100) / 100,
       lastValue: Math.round(lastValue * 100) / 100,
-      dividends: Math.round(dividendsPerShare * 100) / 100,
-      adjLastValue: Math.round(adjLastValue * 100) / 100,
+      dividends: 0,  // Not shown separately since adjusted_close includes them
+      adjLastValue: Math.round(lastValue * 100) / 100,  // Same as lastValue since using adjusted_close
       stockReturn: Math.round(stockReturn * 10) / 10,
       alphaVsSPY: Math.round(alphaVsSPY * 10) / 10,
       hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
