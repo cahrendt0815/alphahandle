@@ -29,6 +29,10 @@ import ExternalLinkIcon from '../components/ExternalLinkIcon';
 import { analyzeHandle, getCachedAnalysis } from '../services/fintwitService';
 import { getEntitlementForUser, hasFullAccess } from '../services/entitlements';
 import BlurReveal from '../components/BlurReveal';
+import Card from '../components/ui/Card';
+import { Stat } from '../components/ui/Stat';
+import { colors } from '../theme/tokens';
+import { appStyles } from '../theme/styles';
 
 export default function PortalScreen({ navigation, route }) {
   const { user, signOut, loading } = useAuth();
