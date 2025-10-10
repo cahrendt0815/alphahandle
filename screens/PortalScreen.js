@@ -25,6 +25,7 @@ import MagnifyingGlassIcon from '../components/MagnifyingGlassIcon';
 import SignOutIcon from '../components/SignOutIcon';
 import ChevronIcon from '../components/ChevronIcon';
 import LockIcon from '../components/LockIcon';
+import ExternalLinkIcon from '../components/ExternalLinkIcon';
 import { analyzeHandle, getCachedAnalysis } from '../services/fintwitService';
 import { getEntitlementForUser, hasFullAccess } from '../services/entitlements';
 import BlurReveal from '../components/BlurReveal';
@@ -614,7 +615,7 @@ export default function PortalScreen({ navigation, route }) {
                         <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
                           <Text>{trade.dateMentioned}</Text>
                           <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
-                            <Text style={{ fontSize: 13, color: '#007AFF' }}>□↗</Text>
+                            <ExternalLinkIcon size={14} color="#007AFF" />
                           </TouchableOpacity>
                         </View>
                         <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
