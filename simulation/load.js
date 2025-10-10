@@ -45,6 +45,7 @@ function normalizeSymbol(symbol) {
 
 /**
  * Fetch entry price from EODHD (OPEN on next trading day after tweet)
+ * Returns both unadjusted and adjusted prices for dividend calculations
  */
 async function fetchEntryPrice(symbol, tweetTimestamp) {
   const tweetDate = new Date(tweetTimestamp);
@@ -62,7 +63,7 @@ async function fetchEntryPrice(symbol, tweetTimestamp) {
 
     const data = await response.json();
     if (!data || !Array.isArray(data) || data.length === 0) {
-      return { price: null, asof: null };
+      return { price: null, adjPrice: null, asof: null };
     }
 
     // Find first trading day after tweet
@@ -71,24 +72,33 @@ async function fetchEntryPrice(symbol, tweetTimestamp) {
       if (tradeDate > tweetDate) {
         return {
           price: parseFloat(row.open),
+          adjPrice: parseFloat(row.adjusted_close),  // Adjusted for dividends
           asof: row.date
         };
       }
     }
 
-    return { price: null, asof: null };
+    return { price: null, adjPrice: null, asof: null };
   } catch (error) {
     console.warn(`  Failed to fetch entry price for ${symbol}: ${error.message}`);
-    return { price: null, asof: null };
+    return { price: null, adjPrice: null, asof: null };
   }
 }
 
 /**
- * Fetch latest price from EODHD (real-time API)
+ * Fetch latest price from EODHD (EOD API for adjusted close)
+ * Uses yesterday's EOD data which includes adjusted_close
  */
 async function fetchLatestPrice(symbol) {
   const normalizedSymbol = normalizeSymbol(symbol);
-  const url = `${EODHD_BASE_URL}/real-time/${normalizedSymbol}?api_token=${EODHD_API_TOKEN}&fmt=json`;
+
+  // Get last 5 days of data to ensure we have the most recent trading day
+  const today = new Date();
+  const fiveDaysAgo = new Date(today.getTime() - 5 * 24 * 60 * 60 * 1000);
+  const fromDate = fiveDaysAgo.toISOString().split('T')[0];
+  const toDate = today.toISOString().split('T')[0];
+
+  const url = `${EODHD_BASE_URL}/eod/${normalizedSymbol}?api_token=${EODHD_API_TOKEN}&from=${fromDate}&to=${toDate}&fmt=json`;
 
   try {
     const response = await fetch(url);
@@ -97,19 +107,21 @@ async function fetchLatestPrice(symbol) {
     }
 
     const data = await response.json();
-    if (!data || !data.close) {
-      return { price: null, asof: null };
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return { price: null, adjPrice: null, asof: null };
     }
 
-    const price = parseFloat(data.close);
-    const asof = data.timestamp
-      ? new Date(data.timestamp * 1000).toISOString().split('T')[0]
-      : new Date().toISOString().split('T')[0];
+    // Get the most recent trading day
+    const latest = data[data.length - 1];
 
-    return { price, asof };
+    return {
+      price: parseFloat(latest.close),
+      adjPrice: parseFloat(latest.adjusted_close),  // Adjusted for dividends
+      asof: latest.date
+    };
   } catch (error) {
     console.warn(`  Failed to fetch latest price for ${symbol}: ${error.message}`);
-    return { price: null, asof: null };
+    return { price: null, adjPrice: null, asof: null };
   }
 }
 
@@ -117,30 +129,30 @@ async function fetchLatestPrice(symbol) {
  * Fetch real market data from EODHD API
  */
 async function fetchMarketData(recommendations) {
-  console.log('[Load] Fetching real market data from EODHD API...');
+  console.log('[Load] Fetching real market data from EODHD API with dividends...');
 
   const priceMap = new Map();
 
   // Fetch entry prices
   for (const rec of recommendations) {
-    const { price, asof } = await fetchEntryPrice(rec.ticker, rec.mentioned_at);
-    priceMap.set(`${rec.ticker}|entry|${rec.mentioned_at}`, { price, asof });
+    const { price, adjPrice, asof } = await fetchEntryPrice(rec.ticker, rec.mentioned_at);
+    priceMap.set(`${rec.ticker}|entry|${rec.mentioned_at}`, { price, adjPrice, asof });
   }
 
   // Fetch latest prices (deduplicate by symbol)
   const uniqueSymbols = [...new Set(recommendations.map(r => r.ticker))];
   for (const symbol of uniqueSymbols) {
-    const { price, asof } = await fetchLatestPrice(symbol);
-    priceMap.set(`${symbol}|latest`, { price, asof });
+    const { price, adjPrice, asof } = await fetchLatestPrice(symbol);
+    priceMap.set(`${symbol}|latest`, { price, adjPrice, asof });
   }
 
   // Fetch SPY benchmark
   const spyEntryPrices = new Map();
   for (const rec of recommendations) {
     if (!spyEntryPrices.has(rec.mentioned_at)) {
-      const { price, asof } = await fetchEntryPrice('SPY', rec.mentioned_at);
-      spyEntryPrices.set(rec.mentioned_at, { price, asof });
-      priceMap.set(`SPY|entry|${rec.mentioned_at}`, { price, asof });
+      const { price, adjPrice, asof } = await fetchEntryPrice('SPY', rec.mentioned_at);
+      spyEntryPrices.set(rec.mentioned_at, { price, adjPrice, asof });
+      priceMap.set(`SPY|entry|${rec.mentioned_at}`, { price, adjPrice, asof });
     }
   }
 
@@ -189,23 +201,36 @@ async function aggregateRecommendations(recommendations) {
     const spyEntry = priceMap.get(spyEntryKey);
 
     if (!entryData || !latestData || !spyEntry || !spyLatest ||
-        entryData.price === null || latestData.price === null ||
-        spyEntry.price === null || spyLatest.price === null) {
+        entryData.adjPrice === null || latestData.adjPrice === null ||
+        spyEntry.adjPrice === null || spyLatest.adjPrice === null) {
       console.warn(`[Load] ⚠️  Missing price data for ${ticker}, skipping...`);
       continue;
     }
 
+    // Use unadjusted prices for display
     const beginningValue = entryData.price;
     const lastValue = latestData.price;
-    const stockReturn = ((lastValue - beginningValue) / beginningValue) * 100;
 
-    // Calculate SPY return for same period
-    const spyBegin = spyEntry.price;
-    const spyEnd = spyLatest.price;
-    const spyReturn = ((spyEnd - spyBegin) / spyBegin) * 100;
+    // Use adjusted prices for return calculations (includes dividends)
+    const adjBeginning = entryData.adjPrice;
+    const adjLast = latestData.adjPrice;
+    const stockReturn = ((adjLast - adjBeginning) / adjBeginning) * 100;
 
-    // Alpha = stock return - SPY return
+    // Calculate dividends as the difference between adjusted and unadjusted returns
+    const unadjReturn = ((lastValue - beginningValue) / beginningValue) * 100;
+    const dividendContribution = stockReturn - unadjReturn;
+    const dividendsPerShare = (dividendContribution / 100) * beginningValue;
+
+    // Calculate SPY return with dividends (adjusted prices)
+    const spyAdjBegin = spyEntry.adjPrice;
+    const spyAdjEnd = spyLatest.adjPrice;
+    const spyReturn = ((spyAdjEnd - spyAdjBegin) / spyAdjBegin) * 100;
+
+    // Alpha = stock return - SPY return (both with dividends reinvested)
     const alphaVsSPY = stockReturn - spyReturn;
+
+    // Adjusted last value = last stock price + dividends received
+    const adjLastValue = lastValue + dividendsPerShare;
 
     const trade = {
       ticker: `$${ticker}`,
@@ -213,8 +238,8 @@ async function aggregateRecommendations(recommendations) {
       dateMentioned: firstMention.mentioned_at.split('T')[0],
       beginningValue: Math.round(beginningValue * 100) / 100,
       lastValue: Math.round(lastValue * 100) / 100,
-      dividends: 0,
-      adjLastValue: Math.round(lastValue * 100) / 100,
+      dividends: Math.round(dividendsPerShare * 100) / 100,
+      adjLastValue: Math.round(adjLastValue * 100) / 100,
       stockReturn: Math.round(stockReturn * 10) / 10,
       alphaVsSPY: Math.round(alphaVsSPY * 10) / 10,
       hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
@@ -302,8 +327,7 @@ async function upsertAnalysis(analysis) {
  */
 async function main() {
   console.log('[Load] ===============================================');
-  console.log('[Load] Loading simulation with REAL market data');
-  console.log('[Load] API Base:', API_BASE);
+  console.log('[Load] Loading simulation with REAL market data from EODHD');
   console.log('[Load] ===============================================\n');
 
   console.log('[Load] Reading normalized recommendations:', INPUT_NORMALIZED);
