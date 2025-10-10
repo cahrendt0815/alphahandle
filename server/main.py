@@ -74,15 +74,19 @@ def retry_with_backoff(func, max_retries=4, backoff_delays=[0.5, 1, 2, 4]):
     Returns:
         Result from func() or None if all retries fail
     """
+    last_error = None
     for attempt in range(max_retries):
         try:
             return func()
         except Exception as e:
+            last_error = e
+            print(f"[Retry {attempt+1}/{max_retries}] Error: {type(e).__name__}: {str(e)}")
             if attempt < max_retries - 1:
                 delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
                 time.sleep(delay)
             else:
-                # All retries exhausted
+                # All retries exhausted - log final error
+                print(f"[Retry] All attempts failed. Last error: {type(last_error).__name__}: {str(last_error)}")
                 return None
     return None
 
