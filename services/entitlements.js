@@ -62,12 +62,14 @@ export async function getEntitlementForUser(user) {
     console.log('[Entitlements] Returning entitlement:', {
       plan: data.plan,
       searches_quota: data.searches_quota,
+      searches_used: data.searches_used,
       timeline_months: data.timeline_months,
       refresh_at: data.refresh_at,
     });
     return {
       plan: data.plan,
       searches_quota: data.searches_quota,
+      searches_used: data.searches_used || 0,
       timeline_months: data.timeline_months,
       refresh_at: data.refresh_at,
     };

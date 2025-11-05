@@ -40,12 +40,14 @@ export async function saveAnalysis(analysis) {
       handle: normalizedHandle,
       accuracy: analysis.hitRatio || analysis.accuracy || 0,
       avg_return: analysis.avgReturn || 0,
+      alpha: analysis.alpha || 0,
       total_calls: analysis.recentTrades?.length || analysis.totalRecommendations || analysis.totalCalls || 0,
       win_rate: analysis.winRate || 0,
       best_trade: analysis.bestTrade || null,
       worst_trade: analysis.worstTrade || null,
       recent_recommendations: analysis.recentTrades || analysis.recentRecommendations || [],
       last_updated: new Date().toISOString(), // ✅ Real ISO timestamp
+      last_analysis_date: analysis.lastAnalysisDate || new Date().toISOString(), // Track when analysis was run
     };
 
     // Use upsert to insert or update based on handle
@@ -99,12 +101,13 @@ export async function fetchAnalysis(handle) {
     const analysisResult = {
       handle: `@${data.handle}`,
       avgReturn: data.avg_return || 0,
-      alpha: 0, // Not stored in DB
+      alpha: data.alpha || 0,
       hitRatio: data.accuracy || 0,
       winRate: data.win_rate || 0,
       bestTrade: data.best_trade || { ticker: 'N/A', return: '0%', date: '' },
       worstTrade: data.worst_trade || { ticker: 'N/A', return: '0%', date: '' },
       lastUpdated: data.last_updated ? new Date(data.last_updated).toLocaleString() : 'Unknown',
+      lastAnalysisDate: data.last_analysis_date || null,
       recentTrades: data.recent_recommendations || [],
       dataSource: 'cached',
     };
@@ -147,7 +150,7 @@ export async function getAllAnalyses(limit = 50) {
     return data.map(row => ({
       handle: `@${row.handle}`,
       avgReturn: row.avg_return || 0,
-      alpha: 0,
+      alpha: row.alpha || 0,
       hitRatio: row.accuracy || 0,
       winRate: row.win_rate || 0,
       bestTrade: row.best_trade || { ticker: 'N/A', return: '0%', date: '' },

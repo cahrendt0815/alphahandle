@@ -14,6 +14,11 @@ import os
 EODHD_API_TOKEN = os.environ.get('EODHD_API_TOKEN', '68e8d3117def78.19109345')
 EODHD_BASE_URL = 'https://eodhd.com/api'
 
+# ============================================================================
+# Twitter API Configuration
+# ============================================================================
+TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY', 'new1_080d8c24606a4c4f9e3ccc2023c9f50a')
+
 app = FastAPI()
 
 # CORS configuration
@@ -253,3 +258,76 @@ async def dividends(symbol: str):
     Get dividend history for a symbol (stub - EODHD has dividends API if needed).
     """
     return []
+
+
+@app.get("/api/profile/{handle}")
+async def get_profile(handle: str):
+    """
+    Get Twitter profile information for a handle.
+    Fetches from TwitterAPI.io and returns profile data.
+    """
+    # Remove @ if present
+    clean_handle = handle.replace('@', '')
+
+    try:
+        headers = { 'x-api-key': TWITTER_API_KEY }
+
+        # Prefer twitterapi.io's Twitter-compatible path
+        url_v2 = f"https://api.twitterapi.io/twitter/user/by/username/{clean_handle}"
+        resp = requests.get(url_v2, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            # Fallback legacy path
+            url_v1 = f"https://api.twitterapi.io/v1/user/by/username/{clean_handle}"
+            resp = requests.get(url_v1, headers=headers, timeout=10)
+        resp.raise_for_status()
+        raw = resp.json() or {}
+
+        # Normalize potential shapes
+        node = raw.get('data') if isinstance(raw.get('data'), dict) else raw
+        public_metrics = node.get('public_metrics') if isinstance(node, dict) else None
+
+        followers = 0
+        following = 0
+        if public_metrics and isinstance(public_metrics, dict):
+            followers = public_metrics.get('followers_count') or 0
+            following = public_metrics.get('following_count') or 0
+        else:
+            followers = node.get('followers_count') or node.get('followers') or 0
+            following = node.get('friends_count') or node.get('following') or 0
+
+        image_url = node.get('profile_image_url') or node.get('profile_image_url_https')
+        name = node.get('name') or clean_handle
+        username = node.get('username') or clean_handle
+        verified = bool(node.get('verified', False))
+        description = node.get('description') or node.get('bio') or ''
+        created_at = node.get('created_at') or node.get('joined') or ''
+
+        profile = {
+            "imageUrl": image_url,
+            "name": name,
+            "username": username,
+            "verified": verified,
+            "description": description,
+            "created_at": created_at,
+            "followers_count": followers,
+            "friends_count": following,
+            "profile_url": f"https://x.com/{clean_handle}/photo"
+        }
+
+        return profile
+
+    except requests.exceptions.RequestException as e:
+        print(f"[Profile] Error fetching profile for {handle}: {str(e)}")
+        # Return fallback profile
+        return {
+            "imageUrl": f"https://ui-avatars.com/api/?name={clean_handle}&size=128&background=635BFF&color=fff&bold=true",
+            "name": clean_handle,
+            "username": clean_handle,
+            "verified": False,
+            "description": "",
+            "created_at": "",
+            "followers_count": 0,
+            "friends_count": 0,
+            "profile_url": f"https://x.com/{clean_handle}/photo",
+            "error": str(e)
+        }

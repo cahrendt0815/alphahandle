@@ -14,6 +14,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useNavigation } from '@react-navigation/native';
 import { PrimaryButton, SecondaryButton } from '../components/StripeButton';
 import GoogleLogo from '../components/GoogleLogo';
+import { storeHandleForAuth, getAndClearStoredHandle } from '../utils/authRedirectHandle';
 
 const APP_URL = 'http://localhost:8083';
 
@@ -28,7 +29,14 @@ export default function SignInScreen({ route }) {
   const [successMessage, setSuccessMessage] = useState('');
 
   const redirectTo = route.params?.redirectTo || 'Portal';
-  const redirectParams = route.params?.handle ? { handle: route.params.handle } : undefined;
+  const routeHandle = route.params?.handle;
+
+  // Store handle in session storage
+  useEffect(() => {
+    if (routeHandle) {
+      storeHandleForAuth(routeHandle);
+    }
+  }, [routeHandle]);
 
   // Show success message if coming from sign up
   useEffect(() => {
@@ -40,15 +48,23 @@ export default function SignInScreen({ route }) {
   // Redirect if already authenticated
   useEffect(() => {
     if (user) {
-      console.log('[SignIn] User already authenticated, redirecting to:', redirectTo, redirectParams);
+      const handleToUse = routeHandle || getAndClearStoredHandle();
+      const redirectParams = handleToUse ? { handle: handleToUse } : undefined;
+
+      console.log('[SignIn] User already authenticated, redirecting to:', redirectTo, 'with handle:', handleToUse);
       navigation.navigate(redirectTo, redirectParams);
     }
-  }, [user, navigation, redirectTo]);
+  }, [user, navigation, redirectTo, routeHandle]);
 
   const handleGoogleSignIn = async () => {
     try {
       setLoading(true);
       setError('');
+
+      // Store handle before OAuth redirect
+      if (routeHandle) {
+        storeHandleForAuth(routeHandle);
+      }
 
       const { error } = await signInWithGoogle();
 

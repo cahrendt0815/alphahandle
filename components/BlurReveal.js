@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 
-export default function BlurReveal({ onSeeMore, loading = false }) {
+export default function BlurReveal({ onSeeMore, loading = false, remainingCount = 0 }) {
   return (
     <View style={styles.container}>
       {/* Blurred placeholder rows (slots 4-6) */}
@@ -38,13 +38,15 @@ export default function BlurReveal({ onSeeMore, loading = false }) {
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
-                  <Text style={styles.buttonText}>See more</Text>
+                  <Text style={styles.buttonText}>
+                    Show more {remainingCount > 0 ? `(${remainingCount} remaining)` : ''}
+                  </Text>
                   <Text style={styles.buttonIcon}>→</Text>
                 </>
               )}
             </TouchableOpacity>
             <Text style={styles.hintText}>
-              Unlock full analysis history
+              Click to load more trades
             </Text>
           </View>
         </View>

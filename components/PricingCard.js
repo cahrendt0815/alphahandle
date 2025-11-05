@@ -40,12 +40,6 @@ export default function PricingCard({
         </View>
       )}
 
-      {isCurrent && (
-        <View style={styles.currentBadge}>
-          <Text style={styles.currentBadgeText}>Current plan</Text>
-        </View>
-      )}
-
       <View style={styles.header}>
         <Text style={styles.planName}>{plan.name}</Text>
       </View>
@@ -127,23 +121,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   popularBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  currentBadge: {
-    position: 'absolute',
-    top: -12,
-    left: '50%',
-    transform: [{ translateX: -55 }],
-    backgroundColor: '#00D924',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  currentBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#FFFFFF',

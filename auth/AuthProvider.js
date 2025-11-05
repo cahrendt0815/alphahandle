@@ -7,6 +7,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { Alert } from 'react-native';
 import { getAndClearAuthRedirectIntent, getAuthRedirectUrl } from '../utils/authRedirect';
+import { getAndClearStoredHandle } from '../utils/authRedirectHandle';
 
 const AuthContext = createContext({
   user: null,
@@ -73,15 +74,31 @@ export function AuthProvider({ children, navigationRef }) {
         // We just need to ensure the session is set
       }
 
-      // Show welcome message for sign-ins that happen in the app (not from redirect)
-      if (_event === 'SIGNED_IN' && session?.user && !redirectIntent) {
-        const displayName = session.user.user_metadata?.full_name ||
-                           session.user.user_metadata?.name ||
-                           session.user.email;
+      // Handle post-authentication navigation with pending handle
+      if (_event === 'SIGNED_IN' && session?.user) {
+        // Check if there's a pending handle from pre-auth flow
+        const pendingHandle = getAndClearStoredHandle();
 
-        setTimeout(() => {
-          Alert.alert('Welcome!', `Signed in as ${displayName}`);
-        }, 500);
+        if (pendingHandle) {
+          console.log('[Auth] Found pending handle after sign-in:', pendingHandle);
+
+          // Navigate to Portal with the handle (just like the logged-in flow)
+          setTimeout(() => {
+            if (navigationRef?.current) {
+              console.log('[Auth] Navigating to Portal with handle:', pendingHandle);
+              navigationRef.current.navigate('Portal', { handle: pendingHandle });
+            }
+          }, 500);
+        } else if (!redirectIntent) {
+          // Show welcome message for sign-ins without pending handle
+          const displayName = session.user.user_metadata?.full_name ||
+                             session.user.user_metadata?.name ||
+                             session.user.email;
+
+          setTimeout(() => {
+            Alert.alert('Welcome!', `Signed in as ${displayName}`);
+          }, 500);
+        }
       }
     });
 
@@ -185,14 +202,21 @@ export function AuthProvider({ children, navigationRef }) {
 
       if (error) {
         console.error('[Auth] Sign out error:', error);
-        throw error;
+        // Even if Supabase signOut fails, clear local state
+        console.log('[Auth] Clearing local auth state despite error');
+        setSession(null);
+        setUser(null);
       }
 
       console.log('[Auth] Signed out successfully');
       return { error: null };
     } catch (error) {
       console.error('[Auth] Exception during sign out:', error);
-      return { error };
+      // Clear local state even on exception
+      console.log('[Auth] Clearing local auth state despite exception');
+      setSession(null);
+      setUser(null);
+      return { error: null }; // Return success so navigation happens
     }
   };
 

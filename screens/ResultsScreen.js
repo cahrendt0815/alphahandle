@@ -14,31 +14,16 @@ export default function ResultsScreen({ route, navigation }) {
   const [saveError, setSaveError] = useState(null);
   const [timeframe, setTimeframe] = useState('Last 6 Months');
   const [showDropdown, setShowDropdown] = useState(false);
-  const [showAllTrades, setShowAllTrades] = useState(false);
+  const [visibleTradeCount, setVisibleTradeCount] = useState(10);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const { user } = useAuth();
   const timeframes = ['Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'Last 24 Months'];
 
-  // Filter trades to last 6 months and limit visibility
+  // Limit visibility to first N trades based on visibleTradeCount
   const getVisibleTrades = () => {
     if (!data?.recentTrades) return [];
-
-    // Filter to last 6 months
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const filteredTrades = data.recentTrades.filter(trade => {
-      const tradeDate = new Date(trade.dateMentioned);
-      return tradeDate >= sixMonthsAgo;
-    });
-
-    // Show only first 3 unless user has unlocked
-    if (!showAllTrades) {
-      return filteredTrades.slice(0, 3);
-    }
-
-    return filteredTrades;
+    return data.recentTrades.slice(0, visibleTradeCount);
   };
 
   const handleSeeMore = async () => {
@@ -60,9 +45,9 @@ export default function ResultsScreen({ route, navigation }) {
       return;
     }
 
-    // Has plan? Show all trades
-    console.log('[ResultsScreen] User has access, showing all trades');
-    setShowAllTrades(true);
+    // Has plan? Show 10 more trades
+    console.log('[ResultsScreen] User has access, showing 10 more trades');
+    setVisibleTradeCount(prev => prev + 10);
   };
 
   useEffect(() => {
@@ -74,6 +59,7 @@ export default function ResultsScreen({ route, navigation }) {
         console.log('[ResultsScreen] Showing cached data');
         setData(cachedData);
         setLoading(false);
+        setVisibleTradeCount(10); // Reset to show first 10 trades
 
         // Animate fade-in
         Animated.timing(fadeAnim, {
@@ -94,6 +80,7 @@ export default function ResultsScreen({ route, navigation }) {
         setData(freshData);
         setLoading(false);
         setIsRefreshing(false);
+        setVisibleTradeCount(10); // Reset to show first 10 trades
 
         // Animate fade-in if this is first data
         if (fadeAnim._value === 0) {
@@ -319,9 +306,12 @@ export default function ResultsScreen({ route, navigation }) {
                 </View>
               ))}
 
-              {/* Blur Reveal Paywall - show if not all trades visible */}
-              {!showAllTrades && data.recentTrades.length > 3 && (
-                <BlurReveal onSeeMore={handleSeeMore} />
+              {/* Blur Reveal Paywall - show if there are more trades to display */}
+              {visibleTradeCount < data.recentTrades.length && (
+                <BlurReveal
+                  onSeeMore={handleSeeMore}
+                  remainingCount={data.recentTrades.length - visibleTradeCount}
+                />
               )}
             </View>
           </View>

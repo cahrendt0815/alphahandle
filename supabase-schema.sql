@@ -7,12 +7,14 @@ CREATE TABLE IF NOT EXISTS analyses (
   handle TEXT NOT NULL UNIQUE,
   accuracy FLOAT DEFAULT 0,
   avg_return FLOAT DEFAULT 0,
+  alpha FLOAT DEFAULT 0,
   total_calls INTEGER DEFAULT 0,
   win_rate FLOAT DEFAULT 0,
   best_trade JSONB,
   worst_trade JSONB,
   recent_recommendations JSONB,
   last_updated TEXT,
+  last_analysis_date TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

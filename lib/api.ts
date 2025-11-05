@@ -3,8 +3,6 @@
 
 const API_BASE_URL = process.env.MARKET_BASE_URL || "https://alphahandle-api2.onrender.com";
 
-console.log("[API] Using backend:", API_BASE_URL);
-
 // ============================================================================
 // Type Definitions
 // ============================================================================

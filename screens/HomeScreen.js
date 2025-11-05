@@ -60,9 +60,21 @@ export default function HomeScreen({ navigation }) {
     }
 
     setIsAnalyzing(true);
+
+    console.log('[HomeScreen] Starting analysis for handle:', twitterHandle);
+    console.log('[HomeScreen] User authenticated:', user ? 'Yes (' + user.email + ')' : 'No');
+
     setTimeout(() => {
       setIsAnalyzing(false);
-      navigation.navigate('Portal', { handle: twitterHandle });
+      // If user is authenticated, go directly to Portal
+      // If not authenticated, show loading screen then go to AuthGate
+      if (user) {
+        console.log('[HomeScreen] ✅ Navigating to Portal with handle:', twitterHandle);
+        navigation.navigate('Portal', { handle: twitterHandle });
+      } else {
+        console.log('[HomeScreen] ⚠️ Not authenticated, navigating to AnalysisLoading with handle:', twitterHandle);
+        navigation.navigate('AnalysisLoading', { handle: twitterHandle });
+      }
     }, 500);
   };
 

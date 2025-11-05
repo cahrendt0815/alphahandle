@@ -67,10 +67,10 @@ const PLAN_DATA = {
     priceMonthly: 31,
     priceYearly: 228,
     searchLimit: 50,
-    timelineMonths: Infinity,
+    timelineMonths: 36,
     features: [
       '50 searches / month',
-      'Unlimited timeline',
+      'Timeline up to 36 months',
       'Recent Recommendations (full list)',
       'Full performance metrics (accuracy, avg return, win rate)',
       'Best & Worst trades',
@@ -94,6 +94,7 @@ export default function PricingScreen({ navigation, route }) {
   // Get redirect context from route params
   const redirectTo = route.params?.redirectTo;
   const redirectHandle = route.params?.handle;
+  const fromPortal = route.params?.fromPortal;
 
   // Fetch current plan
   useEffect(() => {
@@ -234,7 +235,9 @@ export default function PricingScreen({ navigation, route }) {
     <View style={{ flex: 1 }}>
       <StatusBar style="dark" />
 
+      <>
       {/* Sticky Navigation Bar */}
+      {!fromPortal && (
       <View
         style={[
           styles.navbar,
@@ -356,6 +359,21 @@ export default function PricingScreen({ navigation, route }) {
           </View>
         )}
       </View>
+      )}
+
+      {/* Portal Back Button Header */}
+      {fromPortal && (
+        <View style={styles.portalHeader}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButton}
+          >
+            <Text style={styles.backArrow}>←</Text>
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      </>
 
       <Animated.ScrollView
         style={styles.scrollView}
@@ -455,6 +473,29 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     paddingBottom: 0,
+  },
+
+  // Portal Header with Back Button
+  portalHeader: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 16,
+    paddingHorizontal: 38,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E3E8EF',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  backArrow: {
+    fontSize: 24,
+    color: '#425466',
+  },
+  backText: {
+    fontSize: 14,
+    color: '#425466',
+    fontWeight: '500',
   },
 
   // Navbar

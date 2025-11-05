@@ -26,13 +26,35 @@ import SignOutIcon from '../components/SignOutIcon';
 import ChevronIcon from '../components/ChevronIcon';
 import LockIcon from '../components/LockIcon';
 import ExternalLinkIcon from '../components/ExternalLinkIcon';
-import { analyzeHandle, getCachedAnalysis } from '../services/fintwitService';
+import ExportIcon from '../components/ExportIcon';
+import EmptyStateIcon from '../components/EmptyStateIcon';
+import TrendingUpIcon from '../components/TrendingUpIcon';
+import ChartBarIcon from '../components/ChartBarIcon';
+import TargetIcon from '../components/TargetIcon';
+import StarIcon from '../components/StarIcon';
+import MiniChart from '../components/MiniChart';
+import { analyzeHandle, getCachedAnalysis} from '../services/fintwitService';
+import { addFavorite, listFavorites } from '../services/favorites';
+import { analyzeHandleIncremental } from '../services/incrementalAnalysis';
+import { fetchProfileImage } from '../services/profileCache';
 import { getEntitlementForUser, hasFullAccess } from '../services/entitlements';
 import BlurReveal from '../components/BlurReveal';
 import Card from '../components/ui/Card';
 import { Stat } from '../components/ui/Stat';
 import { colors } from '../theme/tokens';
 import { appStyles } from '../theme/styles';
+
+// Helper function to format date as "Aug 19, 2025"
+function formatDate(dateString) {
+  if (!dateString) return 'Unknown Date';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Invalid Date';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[date.getMonth()];
+  const day = date.getDate();
+  const year = date.getFullYear();
+  return `${month} ${day}, ${year}`;
+}
 
 export default function PortalScreen({ navigation, route }) {
   const { user, signOut, loading } = useAuth();
@@ -43,23 +65,71 @@ export default function PortalScreen({ navigation, route }) {
 
   // Analysis state
   const [data, setData] = useState(null);
+  const [profileData, setProfileData] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showAllTrades, setShowAllTrades] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
+  const [showBenchmarkDropdown, setShowBenchmarkDropdown] = useState(false);
   const [showAuthDropdown, setShowAuthDropdown] = useState(false);
+  const [selectedTimePeriod, setSelectedTimePeriod] = useState('Last 6 Months');
+  const [selectedSort, setSelectedSort] = useState('Newest');
+  const [selectedBenchmark, setSelectedBenchmark] = useState('S&P 500');
+  const [userEntitlement, setUserEntitlement] = useState(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Incremental loading state
+  const [visibleTradesCount, setVisibleTradesCount] = useState(10);
+  const [allTrades, setAllTrades] = useState([]);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const [sessionId, setSessionId] = useState(null);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
+  // Favourites state
+  const [favourites, setFavourites] = useState([]);
+  const [favSortKey, setFavSortKey] = useState('handle'); // handle|return|alpha|hit
+  const [favSortDir, setFavSortDir] = useState('asc'); // asc|desc
 
   // Get handle from route params if provided
   const routeHandle = route.params?.handle;
 
+  // Track if we've already loaded analysis to prevent duplicate loads
+  const hasLoadedRef = useRef(false);
+
   // Load analysis if handle is provided in route params
   useEffect(() => {
+    console.log('[Portal] useEffect fired - routeHandle:', routeHandle, 'user:', user?.email, 'hasLoadedRef:', hasLoadedRef.current);
+
+    // Prevent duplicate loads in React Strict Mode
+    if (hasLoadedRef.current && routeHandle) {
+      console.log('[Portal] useEffect already processed, skipping to prevent duplicate load');
+      return;
+    }
+
     if (routeHandle) {
+      console.log('[Portal] ✅ Handle detected from route params:', routeHandle);
       setTwitterHandle(routeHandle);
+      hasLoadedRef.current = true;
+
+      // Call loadAnalysis immediately - it will handle waiting for user if needed
       loadAnalysis(routeHandle);
+    } else {
+      console.log('[Portal] ⚠️ No handle provided in route params');
     }
   }, [routeHandle]);
+
+  // Load favourites when tab opens or user changes
+  useEffect(() => {
+    const loadFavs = async () => {
+      const uid = user?.id || 'anon';
+      const list = await listFavorites(uid);
+      setFavourites(list);
+    };
+    if (activeTab === 'favourites') {
+      loadFavs();
+    }
+  }, [activeTab, user]);
 
   // Check user's entitlements and auto-unlock if they have access
   useEffect(() => {
@@ -69,6 +139,9 @@ export default function PortalScreen({ navigation, route }) {
         const hasAccess = hasFullAccess(entitlement);
         console.log('[Portal] User entitlement:', entitlement);
         console.log('[Portal] Has full access:', hasAccess);
+
+        // Store entitlement in state for displaying usage data
+        setUserEntitlement(entitlement);
 
         if (hasAccess) {
           console.log('[Portal] ✅ Auto-unlocking all trades for subscribed user');
@@ -82,13 +155,30 @@ export default function PortalScreen({ navigation, route }) {
   const loadAnalysis = async (handle) => {
     let mounted = true;
     setAnalysisLoading(true);
+    setVisibleTradesCount(10); // Reset to show first 10
+    setAllTrades([]);
+    setProcessingProgress(0);
+    setProcessingStatus('');
 
     try {
-      // Try cached data first
+      // Get user's entitlement to determine timeline months
+      const entitlement = user ? await getEntitlementForUser(user) : null;
+      const timelineMonths = 36; // Fetch 3 years of tweets (maximum realistic timeframe)
+
+      console.log(`[Portal] Analyzing with ${timelineMonths} months timeline (plan: ${entitlement?.plan || 'free'})`);
+
+      // Fetch profile data (cached for 3 months)
+      const profile = await fetchProfileImage(handle);
+      if (profile && mounted) {
+        setProfileData(profile);
+      }
+
+      // Try cached data from previous searches
       const cachedData = await getCachedAnalysis(handle);
       if (cachedData && mounted) {
         console.log('[Portal] Showing cached data');
         setData(cachedData);
+        setAllTrades(cachedData.recentTrades || []);
         setAnalysisLoading(false);
 
         Animated.timing(fadeAnim, {
@@ -100,33 +190,145 @@ export default function PortalScreen({ navigation, route }) {
         setIsRefreshing(true);
       }
 
-      // Fetch fresh data
-      const freshData = await analyzeHandle(handle);
-      if (mounted) {
-        console.log('[Portal] Updating with fresh data');
-        setData(freshData);
-        setAnalysisLoading(false);
-        setIsRefreshing(false);
+      // Call server-side analysis endpoint with progressive loading
+      console.log(`[Portal] Calling analysis server...`);
+      const analysisResponse = await fetch(`http://localhost:8002/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
 
-        if (fadeAnim._value === 0) {
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }).start();
-        }
+      if (!analysisResponse.ok) {
+        throw new Error(`Analysis server error: ${analysisResponse.status}`);
       }
+
+      const analysisData = await analysisResponse.json();
+      console.log(`[Portal] ✅ First batch complete:`, analysisData);
+
+      if (!mounted) return;
+
+      // Store session ID for polling
+      if (analysisData.sessionId) {
+        setSessionId(analysisData.sessionId);
+      }
+
+      // Update UI with first batch results
+      setData({
+        avgReturn: analysisData.stats.avgReturn,
+        alpha: analysisData.stats.alpha,
+        winRate: analysisData.stats.winRate,
+        hitRatio: analysisData.stats.hitRatio,
+        totalTrades: analysisData.stats.totalTrades
+      });
+
+      setAllTrades(analysisData.trades);
+      setHasMoreResults(analysisData.hasMore || false);
+      setAnalysisLoading(false);
+      setIsRefreshing(analysisData.hasMore); // Keep showing refreshing indicator if more results coming
+
+      // Animate in
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start();
+
+      // If there are more results coming, start polling for them
+      if (analysisData.hasMore && analysisData.sessionId) {
+        console.log(`[Portal] More results available. Starting background polling...`);
+        setProcessingStatus('Processing remaining tweets...');
+        pollForMoreResults(analysisData.sessionId, mounted);
+      } else {
+        setProcessingStatus('');
+      }
+
+      // Update entitlements
+      if (user) {
+        getEntitlementForUser(user).then(updated => {
+          setUserEntitlement(updated);
+          console.log('[Portal] Updated search usage:', updated.searches_used, '/', updated.searches_quota);
+        });
+      }
+
     } catch (error) {
       console.error('[Portal] Error fetching analysis:', error);
       if (mounted) {
         setAnalysisLoading(false);
         setIsRefreshing(false);
+        setProcessingStatus('');
       }
     }
 
     return () => {
       mounted = false;
     };
+  };
+
+  // Poll for additional results from background processing
+  const pollForMoreResults = async (sid, mounted) => {
+    const maxAttempts = 30; // Poll for up to 5 minutes (30 attempts * 10 seconds)
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        attempts++;
+        console.log(`[Portal] Polling for more results (attempt ${attempts}/${maxAttempts})...`);
+
+        const response = await fetch(`http://localhost:8002/api/analyze/results/${sid}`);
+
+        if (!response.ok) {
+          console.error(`[Portal] Polling error: ${response.status}`);
+          return;
+        }
+
+        const data = await response.json();
+        console.log(`[Portal] Poll result:`, data);
+
+        if (!mounted) return;
+
+        // Update UI with latest results
+        if (data.trades && data.trades.length > 0) {
+          setAllTrades(data.trades);
+          setData({
+            avgReturn: data.stats.avgReturn,
+            alpha: data.stats.alpha,
+            winRate: data.stats.winRate,
+            hitRatio: data.stats.hitRatio,
+            totalTrades: data.stats.totalTrades
+          });
+        }
+
+        // Check if processing is complete
+        if (data.status === 'complete') {
+          console.log(`[Portal] ✅ Background processing complete! Total trades: ${data.trades.length}`);
+          setIsRefreshing(false);
+          setProcessingStatus('');
+          setHasMoreResults(false);
+          return;
+        }
+
+        // Check if there was an error
+        if (data.status === 'error') {
+          console.error(`[Portal] Background processing error:`, data.error);
+          setIsRefreshing(false);
+          setProcessingStatus('');
+          return;
+        }
+
+        // Continue polling if still processing and not exceeded max attempts
+        if (attempts < maxAttempts && data.status === 'processing') {
+          setTimeout(() => poll(), 10000); // Poll every 10 seconds
+        } else if (attempts >= maxAttempts) {
+          console.log(`[Portal] Max polling attempts reached`);
+          setIsRefreshing(false);
+          setProcessingStatus('');
+        }
+
+      } catch (error) {
+        console.error(`[Portal] Polling error:`, error);
+        setIsRefreshing(false);
+        setProcessingStatus('');
+      }
+    };
+
+    // Start polling after a short delay
+    setTimeout(() => poll(), 3000); // Wait 3 seconds before first poll
   };
 
   // Get user's first letter for avatar
@@ -144,11 +346,15 @@ export default function PortalScreen({ navigation, route }) {
     return user?.user_metadata?.full_name || user?.email || 'User';
   };
 
-  // Plan data - show "Free Plan" for non-authenticated users
-  const planData = user ? {
-    name: 'Ape Plan',
-    searchesUsed: 3,
-    searchesTotal: 10,
+  // Plan data - use real entitlement data
+  const planData = userEntitlement ? {
+    name: `${userEntitlement.plan.charAt(0).toUpperCase() + userEntitlement.plan.slice(1)} Plan`,
+    searchesUsed: userEntitlement.searches_used || 0,
+    searchesTotal: userEntitlement.searches_quota || 0,
+  } : user ? {
+    name: 'Loading...',
+    searchesUsed: 0,
+    searchesTotal: 0,
   } : {
     name: 'Free Plan',
     searchesUsed: 0,
@@ -159,33 +365,49 @@ export default function PortalScreen({ navigation, route }) {
     ? (planData.searchesUsed / planData.searchesTotal) * 100
     : 0;
 
-  const menuItems = [
+  const mainMenuItems = [
     {
       id: 'analyzer',
       label: 'Handle Analyzer',
-      icon: 'search',
-      isCustomIcon: true,
+      icon: '@',
     },
     {
       id: 'favourites',
       label: 'Favourites',
       icon: '★',
     },
+  ];
+
+  const bottomMenuItems = [
     {
       id: 'share',
-      label: 'Share on X & earn',
-      icon: '𝕏',
+      label: 'Share on 𝕏 & earn',
+      icon: '$',
     },
   ];
 
   const handleSignOut = async () => {
-    await signOut();
-    navigation.navigate('Home');
+    try {
+      console.log('[Portal] ========== SIGN OUT BUTTON CLICKED ==========');
+      console.log('[Portal] Calling signOut function...');
+      const result = await signOut();
+      console.log('[Portal] Sign out result:', result);
+
+      if (!result?.error) {
+        console.log('[Portal] Sign out successful, navigating to Home');
+        navigation.navigate('Home');
+      } else {
+        console.error('[Portal] Sign out failed with error:', result.error);
+      }
+    } catch (error) {
+      console.error('[Portal] Exception in handleSignOut:', error);
+    }
   };
 
   const handleAnalyze = () => {
     if (twitterHandle.trim()) {
       loadAnalysis(twitterHandle);
+      setTwitterHandle('');
     }
   };
 
@@ -213,6 +435,96 @@ export default function PortalScreen({ navigation, route }) {
     setShowAllTrades(true);
   };
 
+  const handleShowMoreTrades = () => {
+    // Load next 10 trades (or remaining if less than 10)
+    const newCount = Math.min(visibleTradesCount + 10, allTrades.length);
+    console.log(`[Portal] Showing more trades: ${visibleTradesCount} -> ${newCount}`);
+    setVisibleTradesCount(newCount);
+  };
+
+  const handleExportCSV = () => {
+    console.log('[Portal] Exporting track record to CSV...');
+
+    // Get all trades data
+    const trades = allTrades && allTrades.length > 0 ? allTrades : getDummyTrades();
+
+    // CSV header
+    const headers = ['Ticker', 'Company', 'Date Posted', 'Begin Price (USD)', 'Last Price (USD)', 'Return (%)', 'Alpha vs SPY (%)', 'Tweet URL'];
+
+    // CSV rows
+    const rows = trades.map(trade => [
+      trade.ticker.replace('$', ''),
+      trade.company,
+      formatDate(trade.dateMentioned),
+      trade.beginningValue.toFixed(2),
+      trade.lastValue.toFixed(2),
+      trade.stockReturn.toFixed(1),
+      trade.alphaVsSPY.toFixed(1),
+      trade.tweetUrl
+    ]);
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `track_record_${twitterHandle}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    console.log('[Portal] CSV export complete');
+  };
+
+  const handleExportFavourites = () => {
+    console.log('[Portal] Exporting favourites to CSV...');
+
+    // Get favourites data
+    const favs = favourites && favourites.length > 0 ? favourites : [];
+
+    if (favs.length === 0) {
+      console.log('[Portal] No favourites to export');
+      return;
+    }
+
+    // CSV header
+    const headers = ['Handle', 'Return (%)', 'Alpha (%)', 'Hit Ratio (%)'];
+
+    // CSV rows
+    const rows = favs.map(fav => [
+      fav.handle,
+      fav.avgReturn.toFixed(1),
+      fav.alpha.toFixed(1),
+      fav.hitRatio.toFixed(1)
+    ]);
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `favourites_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    console.log('[Portal] Favourites CSV export complete');
+  };
+
   // Get dummy data for display
   const getDummyTrades = () => {
     return [
@@ -227,7 +539,8 @@ export default function PortalScreen({ navigation, route }) {
         stockReturn: 17.8,
         alphaVsSPY: 12.3,
         hitOrMiss: 'Hit',
-        tweetUrl: 'https://twitter.com/chamath/status/123456789'
+        tweetUrl: 'https://twitter.com/chamath/status/123456789',
+        tweetText: 'Just launched this free tool that lets you convert tweets and threads into beautiful images for sharing'
       },
       {
         ticker: 'NVDA',
@@ -240,7 +553,8 @@ export default function PortalScreen({ navigation, route }) {
         stockReturn: 23.8,
         alphaVsSPY: 18.2,
         hitOrMiss: 'Hit',
-        tweetUrl: 'https://twitter.com/chamath/status/123456790'
+        tweetUrl: 'https://twitter.com/chamath/status/123456790',
+        tweetText: 'AI chip demand is absolutely insane right now. Data center buildout accelerating faster than anyone predicted'
       },
       {
         ticker: 'AMZN',
@@ -253,7 +567,8 @@ export default function PortalScreen({ navigation, route }) {
         stockReturn: 10.6,
         alphaVsSPY: 5.1,
         hitOrMiss: 'Hit',
-        tweetUrl: 'https://twitter.com/chamath/status/123456791'
+        tweetUrl: 'https://twitter.com/chamath/status/123456791',
+        tweetText: 'Cloud infrastructure growth continues to be strong. AWS margins improving significantly quarter over quarter'
       },
       {
         ticker: 'META',
@@ -266,27 +581,89 @@ export default function PortalScreen({ navigation, route }) {
         stockReturn: 25.7,
         alphaVsSPY: 20.2,
         hitOrMiss: 'Hit',
-        tweetUrl: 'https://twitter.com/chamath/status/123456792'
+        tweetUrl: 'https://twitter.com/chamath/status/123456792',
+        tweetText: 'Meta AI investments paying off big time. Reality Labs losses narrowing while Threads and Reels engagement exploding'
       }
     ];
   };
 
   // Get visible trades (use real data from analysis if available, otherwise dummy data)
   const getVisibleTrades = () => {
-    console.log('[Portal DEBUG] getVisibleTrades called');
-    console.log('[Portal DEBUG] data exists?', !!data);
-    console.log('[Portal DEBUG] data.recentTrades?', data?.recentTrades);
-    console.log('[Portal DEBUG] recentTrades length?', data?.recentTrades?.length);
-
-    if (data && data.recentTrades && data.recentTrades.length > 0) {
-      console.log('[Portal DEBUG] ✅ Using REAL DATA with', data.recentTrades.length, 'trades!');
-      // Use real data - show first trade or all if showAllTrades is true
-      return showAllTrades ? data.recentTrades : [data.recentTrades[0]];
+    // Use allTrades from incremental loading
+    let trades = [];
+    if (allTrades && allTrades.length > 0) {
+      console.log('[Portal DEBUG] ✅ Using incremental data with', allTrades.length, 'total trades');
+      trades = [...allTrades];
+    } else {
+      console.log('[Portal DEBUG] ❌ Falling back to DUMMY data');
+      // Fallback to dummy data
+      const dummyTrades = getDummyTrades();
+      trades = [dummyTrades[0]];
     }
-    console.log('[Portal DEBUG] ❌ Falling back to DUMMY data');
-    // Fallback to dummy data
-    const dummyTrades = getDummyTrades();
-    return [dummyTrades[0]];
+
+    // Note: Time period filtering is disabled for now to always show all available trades
+    // This ensures data is always visible even if dates are old
+    // In production, this would filter based on the selected time period
+
+    console.log('[Portal DEBUG] After filtering by date:', trades.length, 'trades remain (no filtering applied)');
+
+    // Sort by selected sort option
+    if (selectedSort === 'Newest') {
+      trades.sort((a, b) => new Date(b.dateMentioned) - new Date(a.dateMentioned));
+    } else if (selectedSort === 'Highest Alpha') {
+      trades.sort((a, b) => b.alphaVsSPY - a.alphaVsSPY);
+    } else if (selectedSort === 'Highest Return') {
+      trades.sort((a, b) => b.stockReturn - a.stockReturn);
+    } else if (selectedSort === 'Ticker A-Z') {
+      trades.sort((a, b) => a.ticker.localeCompare(b.ticker));
+    } else if (selectedSort === 'Company A-Z') {
+      trades.sort((a, b) => a.company.localeCompare(b.company));
+    }
+
+    // Show up to visibleTradesCount
+    const result = trades.slice(0, visibleTradesCount);
+    console.log('[Portal DEBUG] Returning', result.length, 'trades to display');
+    return result;
+  };
+
+  // Calculate metrics based on filtered trades
+  const getFilteredMetrics = () => {
+    const trades = getVisibleTrades();
+
+    if (trades.length === 0) {
+      return {
+        avgReturn: data?.avgReturn || 0,
+        alpha: data?.alpha || 0,
+        hitRatio: data?.hitRatio || 0,
+      };
+    }
+
+    // Calculate average return
+    const avgReturn = trades.reduce((sum, trade) => sum + trade.stockReturn, 0) / trades.length;
+
+    // Calculate alpha based on selected benchmark
+    // Note: In a real implementation, you would need benchmark return data
+    // For now, we'll use the alphaVsSPY field and adjust conceptually
+    let alpha;
+    if (selectedBenchmark === 'S&P 500') {
+      alpha = trades.reduce((sum, trade) => sum + (trade.alphaVsSPY || 0), 0) / trades.length;
+    } else if (selectedBenchmark === 'NASDAQ-100') {
+      // Approximate NASDAQ alpha (would need real benchmark data)
+      alpha = trades.reduce((sum, trade) => sum + (trade.alphaVsSPY || 0) - 2, 0) / trades.length;
+    } else if (selectedBenchmark === 'Bitcoin') {
+      // Approximate Bitcoin alpha (would need real benchmark data)
+      alpha = trades.reduce((sum, trade) => sum + (trade.alphaVsSPY || 0) - 5, 0) / trades.length;
+    }
+
+    // Calculate hit ratio
+    const winningTrades = trades.filter(trade => trade.stockReturn > 0).length;
+    const hitRatio = (winningTrades / trades.length) * 100;
+
+    return {
+      avgReturn,
+      alpha: alpha || 0,
+      hitRatio,
+    };
   };
 
   // Get blurred trades (use real data if available)
@@ -333,7 +710,7 @@ export default function PortalScreen({ navigation, route }) {
         <View style={styles.logoSection}>
           <View style={styles.logoContainer}>
             <Image
-              source={require('../assets/alphahandle-logo.png')}
+              source={require('../assets/logos/alphahandle_logo-removebg-preview.png')}
               style={styles.logoImage}
               resizeMode="contain"
             />
@@ -342,7 +719,7 @@ export default function PortalScreen({ navigation, route }) {
 
         {/* Main Menu */}
         <View style={styles.menuSection}>
-          {menuItems.map((item) => (
+          {mainMenuItems.map((item) => (
             <Pressable
               key={item.id}
               style={({ hovered }) => [
@@ -352,16 +729,9 @@ export default function PortalScreen({ navigation, route }) {
               onPress={() => setActiveTab(item.id)}
             >
               <View style={styles.menuIconContainer}>
-                {item.isCustomIcon ? (
-                  <MagnifyingGlassIcon
-                    color={activeTab === item.id ? '#635BFF' : '#697386'}
-                    size={16}
-                  />
-                ) : (
-                  <Text style={[styles.menuIcon, activeTab === item.id && styles.menuIconActive]}>
-                    {item.icon}
-                  </Text>
-                )}
+                <Text style={[styles.menuIcon, activeTab === item.id && styles.menuIconActive]}>
+                  {item.icon}
+                </Text>
               </View>
               <Text style={[styles.menuLabel, activeTab === item.id && styles.menuLabelActive]}>
                 {item.label}
@@ -372,13 +742,36 @@ export default function PortalScreen({ navigation, route }) {
 
         {/* Bottom Section - Plan Info */}
         <View style={styles.bottomSection}>
-          {/* Need Support */}
-          <Pressable style={styles.supportButton}>
-            <View style={styles.supportIconContainer}>
-              <Text style={styles.supportIcon}>?</Text>
-            </View>
-            <Text style={styles.supportText}>Need Support</Text>
-          </Pressable>
+          {/* Bottom Menu Section */}
+          <View style={styles.bottomMenuSection}>
+            {bottomMenuItems.map((item) => (
+              <Pressable
+                key={item.id}
+                style={({ hovered }) => [
+                  styles.menuItem,
+                  hovered && styles.menuItemHover,
+                ]}
+                onPress={() => setActiveTab(item.id)}
+              >
+                <View style={styles.menuIconContainer}>
+                  <Text style={[styles.menuIcon, activeTab === item.id && styles.menuIconActive]}>
+                    {item.icon}
+                  </Text>
+                </View>
+                <Text style={[styles.menuLabel, activeTab === item.id && styles.menuLabelActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
+
+            {/* Help Button */}
+            <Pressable style={styles.menuItem}>
+              <View style={styles.supportIconContainer}>
+                <Text style={styles.supportIcon}>?</Text>
+              </View>
+              <Text style={styles.supportText}>Help</Text>
+            </Pressable>
+          </View>
 
           {/* Plan Card */}
           <View style={styles.planCard}>
@@ -400,7 +793,7 @@ export default function PortalScreen({ navigation, route }) {
 
             <Pressable
               style={styles.upgradeButton}
-              onPress={() => navigation.navigate('Pricing')}
+              onPress={() => navigation.navigate('Pricing', { fromPortal: true })}
             >
               <Text style={styles.upgradeButtonText}>Upgrade Now</Text>
             </Pressable>
@@ -461,21 +854,21 @@ export default function PortalScreen({ navigation, route }) {
       {/* Main Content Area */}
       <ScrollView style={styles.mainContent} contentContainerStyle={styles.mainContentContainer}>
         {activeTab === 'analyzer' && (
-          <View style={styles.contentSection}>
-            {/* Header */}
-            <View style={styles.analyzerHeader}>
-              <Text style={styles.headerTitle}>Handle Analyzer</Text>
-              <Text style={styles.headerSubtitle}>
-                Analyze any FinTwit account to reveal verified performance metrics
-              </Text>
-            </View>
-
-            {/* Search Input */}
+          <Pressable
+            style={styles.contentSection}
+            onPress={() => {
+              setShowDropdown(false);
+              setShowSortDropdown(false);
+              setShowBenchmarkDropdown(false);
+            }}
+          >
+            {/* Search Bar - Rectangle at top with magnifying glass icon */}
             <View style={styles.searchSection}>
               <View style={styles.searchInputContainer}>
+                <MagnifyingGlassIcon size={20} color="#9aa3af" style={{ marginLeft: 12 }} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Enter Twitter handle (e.g., @elonmusk)"
+                  placeholder="Search account handle, e.g. @jimcramer"
                   placeholderTextColor="#9aa3af"
                   value={twitterHandle}
                   onChangeText={setTwitterHandle}
@@ -484,9 +877,170 @@ export default function PortalScreen({ navigation, route }) {
                   returnKeyType="search"
                   onSubmitEditing={handleAnalyze}
                 />
-                <PrimaryButton onPress={handleAnalyze} style={styles.analyzeButtonOverride}>
-                  Analyze
-                </PrimaryButton>
+              </View>
+            </View>
+
+            {/* Page Title and Filters */}
+            <View style={styles.titleSection}>
+              <Text style={styles.resultsTitle}>Handle Analyzer</Text>
+
+              {/* Filters and Export Row */}
+              <View style={styles.filtersRow}>
+                {/* Time Period Filter */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>Time period</Text>
+                  <View style={styles.dateDropdownContainer}>
+                    <Pressable
+                      style={styles.filterButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setShowDropdown(!showDropdown);
+                        setShowSortDropdown(false);
+                        setShowBenchmarkDropdown(false);
+                      }}
+                    >
+                      <Text style={styles.filterButtonText}>{selectedTimePeriod}</Text>
+                      <ChevronIcon direction={showDropdown ? 'up' : 'down'} color="#425466" size={10} />
+                    </Pressable>
+                    {showDropdown && (
+                      <Pressable
+                        style={styles.dateDropdownMenu}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        {['Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'Last 24 Months'].map((tf) => (
+                          <Pressable
+                            key={tf}
+                            style={[
+                              styles.dropdownItem,
+                              tf === selectedTimePeriod && styles.dropdownItemActive
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              setSelectedTimePeriod(tf);
+                              setShowDropdown(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              tf === selectedTimePeriod && styles.dropdownItemTextActive
+                            ]}>
+                              {tf}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+
+                {/* Sort By Filter */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>Sort by</Text>
+                  <View style={styles.dateDropdownContainer}>
+                    <Pressable
+                      style={styles.filterButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setShowSortDropdown(!showSortDropdown);
+                        setShowDropdown(false);
+                        setShowBenchmarkDropdown(false);
+                      }}
+                    >
+                      <Text style={styles.filterButtonText}>{selectedSort}</Text>
+                      <ChevronIcon direction={showSortDropdown ? 'up' : 'down'} color="#425466" size={10} />
+                    </Pressable>
+                    {showSortDropdown && (
+                      <Pressable
+                        style={styles.dateDropdownMenu}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        {['Newest', 'Highest Alpha', 'Highest Return', 'Ticker A-Z', 'Company A-Z'].map((sort) => (
+                          <Pressable
+                            key={sort}
+                            style={[
+                              styles.dropdownItem,
+                              sort === selectedSort && styles.dropdownItemActive
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              setSelectedSort(sort);
+                              setShowSortDropdown(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              sort === selectedSort && styles.dropdownItemTextActive
+                            ]}>
+                              {sort}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+
+                {/* Benchmark Filter */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>Benchmark</Text>
+                  <View style={styles.dateDropdownContainer}>
+                    <Pressable
+                      style={styles.filterButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setShowBenchmarkDropdown(!showBenchmarkDropdown);
+                        setShowDropdown(false);
+                        setShowSortDropdown(false);
+                      }}
+                    >
+                      <Text style={styles.filterButtonText}>{selectedBenchmark}</Text>
+                      <ChevronIcon direction={showBenchmarkDropdown ? 'up' : 'down'} color="#425466" size={10} />
+                    </Pressable>
+                    {showBenchmarkDropdown && (
+                      <Pressable
+                        style={styles.dateDropdownMenu}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        {['S&P 500', 'NASDAQ-100', 'Bitcoin'].map((benchmark) => (
+                          <Pressable
+                            key={benchmark}
+                            style={[
+                              styles.dropdownItem,
+                              benchmark === selectedBenchmark && styles.dropdownItemActive
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              setSelectedBenchmark(benchmark);
+                              setShowBenchmarkDropdown(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              benchmark === selectedBenchmark && styles.dropdownItemTextActive
+                            ]}>
+                              {benchmark}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+
+                {/* Export Button */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>&nbsp;</Text>
+                  <Pressable
+                    style={styles.exportButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleExportCSV();
+                    }}
+                  >
+                    <ExportIcon size={14} color="#425466" />
+                    <Text style={styles.exportButtonText}>Export</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
 
@@ -501,106 +1055,149 @@ export default function PortalScreen({ navigation, route }) {
             {/* Results Section */}
             {data && (
               <Animated.View style={{ opacity: fadeAnim }}>
-                {/* Refreshing Indicator */}
+                {/* Refreshing Indicator with Progress */}
                 {isRefreshing && (
                   <View style={styles.refreshingIndicator}>
                     <ActivityIndicator size="small" color="#635BFF" />
-                    <Text style={styles.refreshingText}>Refreshing...</Text>
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      {processingStatus ? (
+                        <>
+                          <Text style={styles.refreshingText}>{processingStatus}</Text>
+                          {processingProgress > 0 && (
+                            <View style={styles.progressBarBackground}>
+                              <View style={[styles.progressBarFill, { width: `${processingProgress}%` }]} />
+                            </View>
+                          )}
+                        </>
+                      ) : (
+                        <Text style={styles.refreshingText}>Refreshing...</Text>
+                      )}
+                    </View>
                   </View>
                 )}
 
-                {/* Title Section */}
-                <View style={styles.titleSection}>
-                  <Text style={styles.resultsTitle}>Track Record of {data.handle}</Text>
-                </View>
-
-                {/* Metrics Grid with Timeline Dropdown */}
-                <View style={styles.metricsGridWithDropdown}>
-                  {/* Timeline Dropdown */}
-                  <View style={styles.dropdownContainer}>
-                    <Pressable
-                      style={styles.dropdownButton}
-                      onPress={() => setShowDropdown(!showDropdown)}
-                    >
-                      <View>
-                        <Text style={styles.metricLabel}>SHOW</Text>
-                        <Text style={styles.dropdownButtonText}>Last 6 Months</Text>
-                      </View>
-                      <ChevronIcon direction={showDropdown ? 'up' : 'down'} color="#6B7C93" size={10} />
-                    </Pressable>
-
-                    {showDropdown && (
-                      <View style={styles.dropdownMenu}>
-                        {['Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'Last 24 Months'].map((tf) => (
-                          <Pressable
-                            key={tf}
-                            style={[
-                              styles.dropdownItem,
-                              tf === 'Last 6 Months' && styles.dropdownItemActive
-                            ]}
-                            onPress={() => {
-                              setShowDropdown(false);
-                            }}
-                          >
-                            <Text style={[
-                              styles.dropdownItemText,
-                              tf === 'Last 6 Months' && styles.dropdownItemTextActive
-                            ]}>
-                              {tf}
+                {/* Profile Section */}
+                {profileData && (
+                  <View style={styles.profileSection}>
+                    <View style={styles.profileLeft}>
+                      <Image
+                        source={{ uri: profileData.imageUrl }}
+                        style={styles.profileImage}
+                      />
+                      <View style={styles.profileInfo}>
+                        <View style={{ gap: 4 }}>
+                          {/* Photo link and name */}
+                          <TouchableOpacity onPress={() => Linking.openURL(profileData.profile_url)}>
+                            <Text style={[styles.profileName, { textDecorationLine: 'underline' }]}>
+                              {profileData.name || profileData.username}
                             </Text>
-                          </Pressable>
-                        ))}
+                          </TouchableOpacity>
+                          <Text style={styles.profileUsername}>@{profileData.username}</Text>
+                          {!!profileData.description && (
+                            <Text style={{ color: '#425466', marginTop: 2 }} numberOfLines={3}>
+                              {profileData.description}
+                            </Text>
+                          )}
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 }}>
+                            {!!profileData.created_at && (
+                              <Text style={{ color: '#6B7C93', fontSize: 12 }}>
+                                Joined {new Date(profileData.created_at).toLocaleString(undefined, { month: 'long', year: 'numeric' })}
+                              </Text>
+                            )}
+                            <Text style={{ color: '#6B7C93', fontSize: 12 }}>
+                              {profileData.friends_count?.toLocaleString()} Following
+                            </Text>
+                            <Text style={{ color: '#6B7C93', fontSize: 12 }}>
+                              {profileData.followers_count?.toLocaleString()} Followers
+                            </Text>
+                          </View>
+                        </View>
+                        <Pressable
+                          style={styles.favouriteButton}
+                          onPress={async () => {
+                            try {
+                              const uid = user?.id || 'anon';
+                              const handleNorm = (profileData.username || twitterHandle || '').replace(/^@/, '').toLowerCase();
+                              const fav = {
+                                handle: handleNorm,
+                                avgReturn: data?.avgReturn || 0,
+                                alpha: data?.alpha || 0,
+                                hitRatio: data?.hitRatio || 0,
+                                addedAt: new Date().toISOString(),
+                              };
+                              const updated = await addFavorite(uid, fav);
+                              setFavourites(updated);
+                              setActiveTab('favourites');
+                            } catch (e) {
+                              // no-op UI for now
+                            }
+                          }}
+                        >
+                          <StarIcon size={16} color="#697386" />
+                          <Text style={styles.favouriteButtonText}>Add to Favourites</Text>
+                        </Pressable>
                       </View>
-                    )}
+                    </View>
+                    {/* Metrics on the right */}
+                    <View style={styles.profileMetrics}>
+                      {/* Return Card */}
+                      <View style={styles.metricCard}>
+                        <View style={styles.metricHeader}>
+                          <TrendingUpIcon size={20} color="#9AA0A6" />
+                          <Text style={styles.metricLabel}>Return</Text>
+                        </View>
+                        <Text style={[
+                          styles.metricValue,
+                          styles.largeMetric,
+                          { color: getFilteredMetrics().avgReturn >= 0 ? '#1E8E3E' : '#D93025' }
+                        ]}>
+                          {getFilteredMetrics().avgReturn >= 0 ? '+' : ''}{getFilteredMetrics().avgReturn.toFixed(1)}%
+                        </Text>
+                      </View>
+
+                      {/* Alpha Card */}
+                      <View style={styles.metricCard}>
+                        <View style={styles.metricHeader}>
+                          <ChartBarIcon size={20} color="#9AA0A6" />
+                          <Text style={styles.metricLabel}>Alpha</Text>
+                        </View>
+                        <Text style={[
+                          styles.metricValue,
+                          styles.largeMetric,
+                          { color: getFilteredMetrics().alpha >= 0 ? '#1E8E3E' : '#D93025' }
+                        ]}>
+                          {getFilteredMetrics().alpha >= 0 ? '+' : ''}{getFilteredMetrics().alpha.toFixed(1)}%
+                        </Text>
+                      </View>
+
+                      {/* Hit Ratio Card */}
+                      <View style={styles.metricCard}>
+                        <View style={styles.metricHeader}>
+                          <TargetIcon size={20} color="#9AA0A6" />
+                          <Text style={styles.metricLabel}>Hit Ratio</Text>
+                        </View>
+                        <Text style={[styles.metricValue, styles.largeMetric, { color: '#1A1F36' }]}>
+                          {getFilteredMetrics().hitRatio.toFixed(1)}%
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-
-                  {/* Metrics Grid */}
-                  <View style={styles.metricsGrid}>
-                    {/* Return Card */}
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Return</Text>
-                      <Text style={[
-                        styles.metricValue,
-                        styles.largeMetric,
-                        { color: data.avgReturn >= 0 ? '#00D924' : '#FF6B6B' }
-                      ]}>
-                        {data.avgReturn >= 0 ? '+' : ''}{data.avgReturn.toFixed(1)}%
-                      </Text>
-                    </View>
-
-                    {/* Alpha Card */}
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Alpha</Text>
-                      <Text style={[
-                        styles.metricValue,
-                        styles.largeMetric,
-                        { color: data.alpha >= 0 ? '#00D924' : '#FF6B6B' }
-                      ]}>
-                        {data.alpha >= 0 ? '+' : ''}{data.alpha.toFixed(1)}%
-                      </Text>
-                    </View>
-
-                    {/* Hit Ratio Card */}
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Hit Ratio</Text>
-                      <Text style={[styles.metricValue, styles.largeMetric]}>{data.hitRatio.toFixed(1)}%</Text>
-                    </View>
-                  </View>
-                </View>
+                )}
 
                 {/* Recent Recommendations Table */}
                 <View style={styles.tableSection}>
+                  <Text style={styles.tableTitle}>Track Record</Text>
+
                   <View style={styles.resultsTable}>
                     {/* Table Header */}
                     <View style={styles.resultsTableHeader}>
                       <Text style={[styles.tableHeaderText, styles.colTicker]}>Ticker</Text>
                       <Text style={[styles.tableHeaderText, styles.colCompany]}>Company</Text>
-                      <Text style={[styles.tableHeaderText, styles.colDate]}>DATE POST</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colValue]}>Begin</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colValue]}>Last</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colReturn]}>Return</Text>
                       <Text style={[styles.tableHeaderText, styles.numericHeader, styles.colReturn]}>Alpha</Text>
-                      <Text style={[styles.tableHeaderText, styles.colHit]}>Hit/Miss</Text>
+                      <Text style={[styles.tableHeaderText, styles.colPosts]}>Tweet</Text>
                     </View>
 
                     {/* Clear Table Row */}
@@ -612,47 +1209,94 @@ export default function PortalScreen({ navigation, route }) {
                           index % 2 === 1 && styles.tableRowZebra,
                         ]}
                       >
-                        <Text style={[styles.tableCell, styles.tableTickerCell, styles.colTicker]}>
-                          {trade.ticker}
-                        </Text>
-                        <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                        <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                          <Text>{trade.dateMentioned}</Text>
-                          <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
-                            <ExternalLinkIcon size={14} color="#000000" />
-                          </TouchableOpacity>
+                        <View style={[styles.colTicker]}>
+                          <View style={styles.tickerBadge}>
+                            <Text style={[styles.tableCell, styles.tableTickerCell]}>
+                              {trade.ticker.replace('$', '')}
+                            </Text>
+                          </View>
                         </View>
-                        <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                          ${trade.beginningValue.toFixed(0)}
-                        </Text>
-                        <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                          ${trade.lastValue.toFixed(0)}
-                        </Text>
-                        <Text style={[
-                          styles.tableCell,
-                          styles.numericCell,
-                          styles.colReturn,
-                          trade.stockReturn >= 0 ? styles.positiveReturn : styles.negativeReturn
-                        ]}>
-                          {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
-                        </Text>
-                        <Text style={[
-                          styles.tableCell,
-                          styles.numericCell,
-                          styles.colReturn,
-                          trade.alphaVsSPY >= 0 ? styles.positiveAlpha : styles.negativeAlpha
-                        ]}>
-                          {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
-                        </Text>
-                        <Text style={[
-                          styles.tableCell,
-                          styles.colHit,
-                          trade.hitOrMiss === 'Hit' ? styles.hitText : styles.missText
-                        ]}>
-                          {trade.hitOrMiss}
-                        </Text>
+                        <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
+                        <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                          <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                            {trade.beginningValue.toFixed(2)}
+                          </Text>
+                          <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                            USD
+                          </Text>
+                        </View>
+                        <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                          <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                            {trade.lastValue.toFixed(2)}
+                          </Text>
+                          <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                            USD
+                          </Text>
+                        </View>
+                        <View style={[styles.tableCell, styles.colReturn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                          <Text style={{ fontSize: 11, color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025' }}>
+                            {trade.stockReturn >= 0 ? '↗' : '↘'}
+                          </Text>
+                          <Text style={{
+                            fontSize: 12,
+                            fontWeight: '600',
+                            color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025'
+                          }}>
+                            {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
+                          </Text>
+                        </View>
+                        <View style={[styles.tableCell, styles.colReturn, { alignItems: 'flex-start' }]}>
+                          <View style={[
+                            styles.alphaBadge,
+                            trade.alphaVsSPY >= 0 ? styles.positiveAlphaBadge : styles.negativeAlphaBadge
+                          ]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              <Text style={{ fontSize: 11, color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }}>
+                                {trade.alphaVsSPY >= 0 ? '↗' : '↘'}
+                              </Text>
+                              <Text style={[
+                                styles.alphaBadgeText,
+                                { color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }
+                              ]}>
+                                {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.tableCell, styles.colPosts]}
+                          onPress={() => Linking.openURL(trade.tweetUrl)}
+                        >
+                          <View style={styles.tweetCard}>
+                            <View style={styles.tweetHeader}>
+                              <Text style={styles.xIcon}>𝕏</Text>
+                              <Text style={styles.tweetHandle}>@{twitterHandle}</Text>
+                            </View>
+                            <Text style={styles.tweetText} numberOfLines={2}>
+                              {trade.tweetText || 'Just launched this free tool that lets you convert tweets and threads int...'}
+                            </Text>
+                            <Text style={styles.tweetDate}>
+                              {formatDate(trade.dateMentioned)}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
                       </View>
                     ))}
+
+                    {/* Show More Button (only if subscribed and more trades available) */}
+                    {!isRefreshing && allTrades.length > visibleTradesCount && (
+                      <View style={styles.showMoreTradesButtonContainer}>
+                        <Pressable
+                          style={styles.showMoreTradesButton}
+                          onPress={handleShowMoreTrades}
+                        >
+                          <Text style={styles.showMoreTradesButtonText}>
+                            Show More ({allTrades.length - visibleTradesCount} remaining)
+                          </Text>
+                          <Text style={{ fontSize: 16, color: '#635BFF' }}>↓</Text>
+                        </Pressable>
+                      </View>
+                    )}
 
                     {/* Blurred Table Rows with See More Button */}
                     {!showAllTrades && (
@@ -667,45 +1311,77 @@ export default function PortalScreen({ navigation, route }) {
                               (index + 1) % 2 === 1 && styles.tableRowZebra,
                             ]}
                           >
-                            <Text style={[styles.tableCell, styles.tableTickerCell, styles.colTicker]}>
-                              {trade.ticker}
-                            </Text>
-                            <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                            <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                              <Text>{trade.dateMentioned}</Text>
-                              <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
-                                <Text style={{ fontSize: 14, color: '#007AFF' }}>↗</Text>
-                              </TouchableOpacity>
+                            <View style={[styles.colTicker]}>
+                              <View style={styles.tickerBadge}>
+                                <Text style={[styles.tableCell, styles.tableTickerCell]}>
+                                  {trade.ticker.replace('$', '')}
+                                </Text>
+                              </View>
                             </View>
-                            <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                              ${trade.beginningValue.toFixed(0)}
-                            </Text>
-                            <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                              ${trade.lastValue.toFixed(0)}
-                            </Text>
-                            <Text style={[
-                              styles.tableCell,
-                              styles.numericCell,
-                              styles.colReturn,
-                              trade.stockReturn >= 0 ? styles.positiveReturn : styles.negativeReturn
-                            ]}>
-                              {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
-                            </Text>
-                            <Text style={[
-                              styles.tableCell,
-                              styles.numericCell,
-                              styles.colReturn,
-                              trade.alphaVsSPY >= 0 ? styles.positiveAlpha : styles.negativeAlpha
-                            ]}>
-                              {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
-                            </Text>
-                            <Text style={[
-                              styles.tableCell,
-                              styles.colHit,
-                              trade.hitOrMiss === 'Hit' ? styles.hitText : styles.missText
-                            ]}>
-                              {trade.hitOrMiss}
-                            </Text>
+                            <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
+                            <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                              <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                                {trade.beginningValue.toFixed(2)}
+                              </Text>
+                              <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                                USD
+                              </Text>
+                            </View>
+                            <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                              <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                                {trade.lastValue.toFixed(2)}
+                              </Text>
+                              <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                                USD
+                              </Text>
+                            </View>
+                            <View style={[styles.tableCell, styles.colReturn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                              <Text style={{ fontSize: 11, color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025' }}>
+                                {trade.stockReturn >= 0 ? '↗' : '↘'}
+                              </Text>
+                              <Text style={{
+                                fontSize: 12,
+                                fontWeight: '600',
+                                color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025'
+                              }}>
+                                {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
+                              </Text>
+                            </View>
+                            <View style={[styles.tableCell, styles.colReturn, { alignItems: 'flex-start' }]}>
+                              <View style={[
+                                styles.alphaBadge,
+                                trade.alphaVsSPY >= 0 ? styles.positiveAlphaBadge : styles.negativeAlphaBadge
+                              ]}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                  <Text style={{ fontSize: 11, color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }}>
+                                    {trade.alphaVsSPY >= 0 ? '↗' : '↘'}
+                                  </Text>
+                                  <Text style={[
+                                    styles.alphaBadgeText,
+                                    { color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }
+                                  ]}>
+                                    {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                            <TouchableOpacity
+                              style={[styles.tableCell, styles.colPosts]}
+                              onPress={() => Linking.openURL(trade.tweetUrl)}
+                            >
+                              <View style={styles.tweetCard}>
+                                <View style={styles.tweetHeader}>
+                                  <Text style={styles.xIcon}>𝕏</Text>
+                                  <Text style={styles.tweetHandle}>@{twitterHandle}</Text>
+                                </View>
+                                <Text style={styles.tweetText} numberOfLines={2}>
+                                  {trade.tweetText || 'Just launched this free tool that lets you convert tweets and threads int...'}
+                                </Text>
+                                <Text style={styles.tweetDate}>
+                                  {formatDate(trade.dateMentioned)}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
                           </View>
                         ))}
 
@@ -721,45 +1397,76 @@ export default function PortalScreen({ navigation, route }) {
                                 (index + 2) % 2 === 1 && styles.tableRowZebra,
                               ]}
                             >
-                              <Text style={[styles.tableCell, styles.tableTickerCell, styles.colTicker]}>
-                                {trade.ticker}
-                              </Text>
-                              <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
-                              <View style={[styles.tableCell, styles.colDate, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                                <Text>{trade.dateMentioned}</Text>
-                                <TouchableOpacity onPress={() => Linking.openURL(trade.tweetUrl)}>
-                                  <Text style={{ fontSize: 14, color: '#007AFF' }}>↗</Text>
-                                </TouchableOpacity>
+                              <View style={[styles.colTicker]}>
+                                <View style={styles.tickerBadge}>
+                                  <Text style={[styles.tableCell, styles.tableTickerCell]}>
+                                    {trade.ticker.replace('$', '')}
+                                  </Text>
+                                </View>
                               </View>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                                ${trade.beginningValue.toFixed(0)}
-                              </Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.colValue]}>
-                                ${trade.lastValue.toFixed(0)}
-                              </Text>
-                              <Text style={[
-                                styles.tableCell,
-                                styles.numericCell,
-                                styles.colReturn,
-                                trade.stockReturn >= 0 ? styles.positiveReturn : styles.negativeReturn
-                              ]}>
-                                {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
-                              </Text>
-                              <Text style={[
-                                styles.tableCell,
-                                styles.numericCell,
-                                styles.colReturn,
-                                trade.alphaVsSPY >= 0 ? styles.positiveAlpha : styles.negativeAlpha
-                              ]}>
-                                {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
-                              </Text>
-                              <Text style={[
-                                styles.tableCell,
-                                styles.colHit,
-                                trade.hitOrMiss === 'Hit' ? styles.hitText : styles.missText
-                              ]}>
-                                {trade.hitOrMiss}
-                              </Text>
+                              <Text style={[styles.tableCell, styles.colCompany]} numberOfLines={1}>{trade.company}</Text>
+                              <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                                <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                                  {trade.beginningValue.toFixed(2)}
+                                </Text>
+                                <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                                  USD
+                                </Text>
+                              </View>
+                              <View style={[styles.tableCell, styles.colValue, { flexDirection: 'row', alignItems: 'baseline', gap: 3 }]}>
+                                <Text style={[styles.numericCell, { fontSize: 12 }]}>
+                                  {trade.lastValue.toFixed(2)}
+                                </Text>
+                                <Text style={[styles.numericCell, { fontSize: 8, opacity: 0.6 }]}>
+                                  USD
+                                </Text>
+                              </View>
+                              <View style={[styles.tableCell, styles.colReturn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                                <Text style={{ fontSize: 12, color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025' }}>
+                                  {trade.stockReturn >= 0 ? '↗' : '↘'}
+                                </Text>
+                                <Text style={[
+                                  styles.numericCell,
+                                  { color: trade.stockReturn >= 0 ? '#1E8E3E' : '#D93025' }
+                                ]}>
+                                  {trade.stockReturn >= 0 ? '+' : ''}{trade.stockReturn.toFixed(1)}%
+                                </Text>
+                              </View>
+                              <View style={[styles.tableCell, styles.colReturn, { alignItems: 'flex-start' }]}>
+                                <View style={[
+                                  styles.alphaBadge,
+                                  trade.alphaVsSPY >= 0 ? styles.positiveAlphaBadge : styles.negativeAlphaBadge
+                                ]}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <Text style={{ fontSize: 11, color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }}>
+                                      {trade.alphaVsSPY >= 0 ? '↗' : '↘'}
+                                    </Text>
+                                    <Text style={[
+                                      styles.alphaBadgeText,
+                                      { color: trade.alphaVsSPY >= 0 ? '#1E8E3E' : '#D93025' }
+                                    ]}>
+                                      {trade.alphaVsSPY >= 0 ? '+' : ''}{trade.alphaVsSPY.toFixed(1)}%
+                                    </Text>
+                                  </View>
+                                </View>
+                              </View>
+                              <TouchableOpacity
+                                style={[styles.tableCell, styles.colPosts]}
+                                onPress={() => Linking.openURL(trade.tweetUrl)}
+                              >
+                                <View style={styles.tweetCard}>
+                                  <View style={styles.tweetHeader}>
+                                    <Text style={styles.xIcon}>𝕏</Text>
+                                    <Text style={styles.tweetHandle}>@{twitterHandle}</Text>
+                                  </View>
+                                  <Text style={styles.tweetText} numberOfLines={2}>
+                                    {trade.tweetText || 'Just launched this free tool that lets you convert tweets and threads int...'}
+                                  </Text>
+                                  <Text style={styles.tweetDate}>
+                                    {formatDate(trade.dateMentioned)}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
                             </View>
                           ))}
 
@@ -780,35 +1487,242 @@ export default function PortalScreen({ navigation, route }) {
                 </View>
               </Animated.View>
             )}
-          </View>
+
+            {/* Empty State */}
+            {!data && !analysisLoading && (
+              <View style={styles.emptyState}>
+                <View style={{ marginBottom: 8 }}>
+                  <EmptyStateIcon width={280} height={200} />
+                </View>
+                <Text style={styles.emptyStateTitle}>Transparency is at your fingertips</Text>
+                <Text style={styles.emptyStateSubtitle}>Start by searching a handle</Text>
+              </View>
+            )}
+          </Pressable>
         )}
 
         {activeTab === 'favourites' && (
-          <View style={styles.contentSection}>
-            <View style={styles.header}>
-              <Text style={styles.headerTitle}>Favourites</Text>
-              <Text style={styles.headerSubtitle}>
-                Your saved analyses and favorite accounts
-              </Text>
+          <Pressable
+            style={styles.contentSection}
+            onPress={() => {
+              setShowDropdown(false);
+              setShowSortDropdown(false);
+              setShowBenchmarkDropdown(false);
+            }}
+          >
+            {/* Search Bar */}
+            <View style={styles.searchSection}>
+              <View style={styles.searchInputContainer}>
+                <MagnifyingGlassIcon size={20} color="#9aa3af" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search account handle, e.g. @jimcramer"
+                  placeholderTextColor="#9aa3af"
+                  value={twitterHandle}
+                  onChangeText={setTwitterHandle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  onSubmitEditing={handleAnalyze}
+                />
+              </View>
             </View>
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>★</Text>
-              <Text style={styles.emptyStateText}>No favourites yet</Text>
-              <Text style={styles.emptyStateSubtext}>
-                Star accounts to save them here for quick access
-              </Text>
+
+            {/* Page Title and Filters */}
+            <View style={styles.titleSection}>
+              <Text style={styles.resultsTitle}>Favourites</Text>
+
+              {/* Filters Row */}
+              <View style={styles.filtersRow}>
+                {/* Time Period Filter */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>Time period</Text>
+                  <View style={styles.dateDropdownContainer}>
+                    <Pressable
+                      style={styles.filterButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setShowDropdown(!showDropdown);
+                        setShowSortDropdown(false);
+                        setShowBenchmarkDropdown(false);
+                      }}
+                    >
+                      <Text style={styles.filterButtonText}>{selectedTimePeriod}</Text>
+                      <ChevronIcon direction={showDropdown ? 'up' : 'down'} color="#425466" size={10} />
+                    </Pressable>
+                    {showDropdown && (
+                      <Pressable
+                        style={styles.dateDropdownMenu}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        {['Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'Last 24 Months'].map((tf) => (
+                          <Pressable
+                            key={tf}
+                            style={[
+                              styles.dropdownItem,
+                              tf === selectedTimePeriod && styles.dropdownItemActive
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              setSelectedTimePeriod(tf);
+                              setShowDropdown(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              tf === selectedTimePeriod && styles.dropdownItemTextActive
+                            ]}>
+                              {tf}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+
+                {/* Benchmark Filter */}
+                <View style={styles.filterContainer}>
+                  <Text style={styles.filterLabel}>Benchmark</Text>
+                  <View style={styles.dateDropdownContainer}>
+                    <Pressable
+                      style={styles.filterButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setShowBenchmarkDropdown(!showBenchmarkDropdown);
+                        setShowDropdown(false);
+                      }}
+                    >
+                      <Text style={styles.filterButtonText}>{selectedBenchmark}</Text>
+                      <ChevronIcon direction={showBenchmarkDropdown ? 'up' : 'down'} color="#425466" size={10} />
+                    </Pressable>
+                    {showBenchmarkDropdown && (
+                      <Pressable
+                        style={styles.dateDropdownMenu}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        {['S&P 500', 'NASDAQ-100', 'Bitcoin'].map((benchmark) => (
+                          <Pressable
+                            key={benchmark}
+                            style={[
+                              styles.dropdownItem,
+                              benchmark === selectedBenchmark && styles.dropdownItemActive
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              setSelectedBenchmark(benchmark);
+                              setShowBenchmarkDropdown(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              benchmark === selectedBenchmark && styles.dropdownItemTextActive
+                            ]}>
+                              {benchmark}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              </View>
             </View>
-          </View>
+
+            {(!favourites || favourites.length === 0) ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateIcon}>★</Text>
+                <Text style={styles.emptyStateText}>No favourites yet</Text>
+                <Text style={styles.emptyStateSubtext}>
+                  Star accounts to save them here for quick access
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.resultsTable}>
+                {/* Header with sortable columns */}
+                <View style={styles.resultsTableHeader}>
+                  {[
+                    { key: 'handle', label: 'Handle' },
+                    { key: 'avgReturn', label: 'Return' },
+                    { key: 'alpha', label: 'Alpha' },
+                    { key: 'hitRatio', label: 'Hit Ratio' },
+                  ].map((col) => (
+                    <Pressable
+                      key={col.key}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => {
+                        if (favSortKey === col.key) {
+                          setFavSortDir(favSortDir === 'asc' ? 'desc' : 'asc');
+                        } else {
+                          setFavSortKey(col.key);
+                          setFavSortDir('asc');
+                        }
+                      }}
+                    >
+                      <Text style={styles.tableHeaderText}>{col.label}</Text>
+                      <Text style={{ fontSize: 10, marginLeft: 4, color: '#6B7C93' }}>
+                        {favSortKey === col.key ? (favSortDir === 'asc' ? '↑' : '↓') : ''}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {favourites
+                  .slice()
+                  .sort((a, b) => {
+                    const dir = favSortDir === 'asc' ? 1 : -1;
+                    if (favSortKey === 'handle') {
+                      return a.handle.localeCompare(b.handle) * dir;
+                    }
+                    return ((a[favSortKey] || 0) - (b[favSortKey] || 0)) * dir;
+                  })
+                  .map((fav, idx) => (
+                    <View
+                      key={`${fav.handle}-${idx}`}
+                      style={[styles.resultsTableRow, idx % 2 === 1 && styles.tableRowZebra]}
+                    >
+                      <Text style={[styles.tableCell, { flex: 1, fontWeight: '600', color: '#635BFF' }]}>@{fav.handle}</Text>
+                      <Text style={[styles.tableCell, { flex: 1, color: (fav.avgReturn || 0) >= 0 ? '#1E8E3E' : '#D93025' }]}>
+                        {(fav.avgReturn || 0) >= 0 ? '+' : ''}{(fav.avgReturn || 0).toFixed(1)}%
+                      </Text>
+                      <Text style={[styles.tableCell, { flex: 1, color: (fav.alpha || 0) >= 0 ? '#1E8E3E' : '#D93025' }]}>
+                        {(fav.alpha || 0) >= 0 ? '+' : ''}{(fav.alpha || 0).toFixed(1)}%
+                      </Text>
+                      <Text style={[styles.tableCell, { flex: 1 }]}>
+                        {(fav.hitRatio || 0).toFixed(1)}%
+                      </Text>
+                    </View>
+                  ))}
+              </View>
+            )}
+          </Pressable>
         )}
 
         {activeTab === 'share' && (
           <View style={styles.contentSection}>
-            <View style={styles.header}>
-              <Text style={styles.headerTitle}>Share on X & earn</Text>
-              <Text style={styles.headerSubtitle}>
-                Share on X (Twitter) and earn additional search credits
-              </Text>
+            {/* Search Bar */}
+            <View style={styles.searchSection}>
+              <View style={styles.searchInputContainer}>
+                <MagnifyingGlassIcon size={20} color="#9aa3af" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search account handle, e.g. @jimcramer"
+                  placeholderTextColor="#9aa3af"
+                  value={twitterHandle}
+                  onChangeText={setTwitterHandle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  onSubmitEditing={handleAnalyze}
+                />
+              </View>
             </View>
+
+            {/* Page Title */}
+            <View style={styles.titleSection}>
+              <Text style={styles.resultsTitle}>Share on X & earn</Text>
+            </View>
+
             <View style={styles.referralCard}>
               <Text style={styles.referralTitle}>Your Referral Link</Text>
               <View style={styles.referralLinkContainer}>
@@ -854,15 +1768,17 @@ const styles = StyleSheet.create({
 
   // Logo Section
   logoSection: {
-    marginBottom: 24,
-    paddingBottom: 16,
+    marginBottom: 12,
+    paddingBottom: 0,
+    paddingTop: 0,
+    marginTop: -8,
   },
   logoContainer: {
-    paddingVertical: 4,
+    paddingVertical: 0,
   },
   logoImage: {
-    height: 32,
-    width: 168,
+    height: 56,
+    width: 208,
   },
 
   // Menu Items
@@ -876,7 +1792,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingLeft: 16,
+    paddingRight: 12,
     borderRadius: 6,
     gap: 12,
   },
@@ -912,15 +1829,9 @@ const styles = StyleSheet.create({
     borderTopColor: '#E6EBF1',
     flexShrink: 0,
   },
-
-  // Support Button
-  supportButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    gap: 12,
-    borderRadius: 6,
+  bottomMenuSection: {
+    gap: 2,
+    marginBottom: 0,
   },
   supportIconContainer: {
     width: 18,
@@ -1052,6 +1963,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#4F566B',
+    letterSpacing: -0.32,
   },
   authDropdownArrow: {
     fontSize: 12,
@@ -1088,63 +2000,55 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#4F566B',
+    letterSpacing: -0.32,
   },
 
   // Main Content
   mainContent: {
     flex: 1,
-    backgroundColor: '#F6F9FC',
+    backgroundColor: '#FFFFFF',
     height: '100vh',
     overflow: 'auto',
   },
   mainContentContainer: {
-    padding: 32,
+    paddingTop: 12,
+    paddingRight: 32,
+    paddingBottom: 32,
+    paddingLeft: 32,
   },
   contentSection: {
     flex: 1,
   },
 
-  // Header
-  header: {
-    marginBottom: 32,
-  },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#0A2540',
-    marginBottom: 8,
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    fontSize: 16,
-    color: '#425466',
-    lineHeight: 24,
-  },
-
-  // Search Section
+  // Search Section - Rectangle at top with search icon
   searchSection: {
     marginBottom: 32,
+    marginTop: 8,
+    zIndex: 10000,
+    position: 'relative',
   },
   searchInputContainer: {
     flexDirection: 'row',
-    backgroundColor: '#f7f8fb',
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: '#E3E8EF',
-    padding: 6,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    borderWidth: 0,
     alignItems: 'center',
+    height: 38,
     maxWidth: 600,
+    paddingLeft: 4,
+    paddingRight: 4,
+    zIndex: 10000,
+    position: 'relative',
   },
   searchInput: {
     flex: 1,
-    paddingHorizontal: 20,
-    fontSize: 18,
-    color: '#0b0b0c',
-    height: 42,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#5F6368',
+    height: 38,
     backgroundColor: 'transparent',
-  },
-  analyzeButtonOverride: {
-    marginBottom: 0,
+    outlineStyle: 'none',
+    letterSpacing: -0.4,
   },
 
   // Recent Section
@@ -1156,6 +2060,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0A2540',
     marginBottom: 20,
+    letterSpacing: -0.45,
   },
 
   // Table
@@ -1179,7 +2084,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#425466',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: -0.3,
   },
   tableRow: {
     flexDirection: 'row',
@@ -1191,6 +2096,7 @@ const styles = StyleSheet.create({
   tableCell: {
     fontSize: 14,
     color: '#0A2540',
+    letterSpacing: -0.35,
   },
   handleColumn: {
     flex: 2,
@@ -1204,16 +2110,20 @@ const styles = StyleSheet.create({
   handleText: {
     fontWeight: '600',
     color: '#635BFF',
+    letterSpacing: -0.35,
   },
   metricValue: {
     fontWeight: '600',
+    letterSpacing: -0.35,
   },
   positiveValue: {
     fontWeight: '600',
     color: '#00D924',
+    letterSpacing: -0.35,
   },
   dateText: {
     color: '#8A94A6',
+    letterSpacing: -0.35,
   },
 
   // Empty State
@@ -1232,12 +2142,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#425466',
     marginBottom: 8,
+    letterSpacing: -0.45,
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: '#8A94A6',
     textAlign: 'center',
     maxWidth: 400,
+    letterSpacing: -0.35,
   },
 
   // Referral Card
@@ -1254,6 +2166,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0A2540',
     marginBottom: 16,
+    letterSpacing: -0.4,
   },
   referralLinkContainer: {
     flexDirection: 'row',
@@ -1270,6 +2183,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 14,
     color: '#425466',
+    letterSpacing: -0.35,
   },
   copyButton: {
     backgroundColor: '#635BFF',
@@ -1283,11 +2197,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+    letterSpacing: -0.35,
   },
   referralNote: {
     fontSize: 13,
     color: '#8A94A6',
     lineHeight: 20,
+    letterSpacing: -0.32,
   },
 
   // Analysis Results Styles
@@ -1303,6 +2219,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7C93',
     fontWeight: '500',
+    letterSpacing: -0.4,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 40,
+    paddingBottom: 120,
+    paddingHorizontal: 32,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1A1F36',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyStateSubtitle: {
+    fontSize: 16,
+    color: '#6B7C93',
+    textAlign: 'center',
   },
   refreshingIndicator: {
     flexDirection: 'row',
@@ -1321,25 +2258,114 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#635BFF',
     fontWeight: '500',
+    letterSpacing: -0.32,
   },
   titleSection: {
-    marginBottom: 12,
+    marginBottom: 32,
+    zIndex: 10000,
+    position: 'relative',
   },
   resultsTitle: {
-    fontSize: 18,
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1A1F36',
+    letterSpacing: -0.5,
+    marginBottom: 16,
+  },
+  filtersRow: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  filterContainer: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  filterLabel: {
+    fontSize: 12,
     fontWeight: '700',
     color: '#1A1F36',
     letterSpacing: -0.3,
+  },
+  dateDropdownContainer: {
+    position: 'relative',
+    zIndex: 10001,
+    alignSelf: 'flex-start',
+  },
+  dateDropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    backgroundColor: '#FFFFFF',
+    gap: 6,
+  },
+  dateDropdownButtonText: {
+    fontSize: 14,
+    color: '#425466',
+    fontWeight: '500',
+    letterSpacing: -0.35,
+  },
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    backgroundColor: '#FFFFFF',
+    minWidth: 160,
+  },
+  filterButtonText: {
+    fontSize: 14,
+    color: '#425466',
+    fontWeight: '500',
+    letterSpacing: -0.35,
+  },
+  exportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    backgroundColor: '#FFFFFF',
+    gap: 6,
+  },
+  dateDropdownMenu: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 999,
+    zIndex: 99999,
   },
   handleTextResults: {
     fontSize: 20,
     fontWeight: '600',
     color: '#635BFF',
     marginBottom: 8,
+    letterSpacing: -0.5,
   },
   lastUpdated: {
     fontSize: 13,
     color: '#6B7C93',
+    letterSpacing: -0.32,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -1349,38 +2375,58 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    minWidth: 165,
+    minWidth: 200,
     backgroundColor: '#FFFFFF',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
     borderWidth: 1,
     borderColor: '#E3E8EF',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    height: 42,
-    justifyContent: 'center',
-    alignItems: 'flex-start',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    minHeight: 120,
+    justifyContent: 'space-between',
+  },
+  metricHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  metricIcon: {
+    fontSize: 20,
   },
   metricLabel: {
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '600',
     color: '#6B7C93',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
+    letterSpacing: -0.3,
+  },
+  metricValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
   },
   metricValue: {
     fontSize: 14,
     fontWeight: '700',
     color: '#1A1F36',
     marginBottom: 0,
+    letterSpacing: -0.35,
   },
   largeMetric: {
-    fontSize: 16,
-    lineHeight: 18,
+    fontSize: 32,
+    lineHeight: 36,
+    letterSpacing: -0.8,
+    fontWeight: '700',
+  },
+  metricChange: {
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: -0.35,
   },
   progressBarBackground: {
     width: '100%',
@@ -1398,12 +2444,80 @@ const styles = StyleSheet.create({
   tableSection: {
     marginBottom: 16,
   },
-  sectionTitleResults: {
-    fontSize: 16,
-    fontWeight: '700',
+  tableTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 4,
+    zIndex: 1001,
+  },
+  tableTitle: {
+    fontSize: 20,
+    fontWeight: '600',
     color: '#1A1F36',
-    marginBottom: 12,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
+    marginBottom: 20,
+  },
+  tableControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    zIndex: 1001,
+  },
+  exportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    backgroundColor: '#FFFFFF',
+    gap: 6,
+  },
+  exportButtonText: {
+    fontSize: 14,
+    color: '#425466',
+    fontWeight: '500',
+    letterSpacing: -0.35,
+  },
+  tableFilterDropdown: {
+    position: 'relative',
+    zIndex: 1000,
+  },
+  filterDropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    backgroundColor: '#FFFFFF',
+    gap: 8,
+  },
+  filterDropdownButtonText: {
+    fontSize: 14,
+    color: '#425466',
+    fontWeight: '500',
+    letterSpacing: -0.35,
+  },
+  filterDropdownMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    zIndex: 1000,
+    minWidth: 160,
   },
   resultsTable: {
     backgroundColor: '#FFFFFF',
@@ -1411,16 +2525,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E3E8EF',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
+    zIndex: 1,
   },
   resultsTableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#F6F9FC',
+    backgroundColor: '#FAFAFA',
     padding: 12,
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
     borderBottomColor: '#E3E8EF',
   },
   tableHeaderText: {
@@ -1428,11 +2539,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#6B7C93',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: -0.25,
     paddingHorizontal: 6,
+    textAlign: 'left',
   },
   numericHeader: {
-    textAlign: 'right',
+    textAlign: 'left',
   },
   resultsTableRow: {
     flexDirection: 'row',
@@ -1440,6 +2552,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E3E8EF',
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
   },
   tableRowZebra: {
     backgroundColor: '#FAFBFC',
@@ -1448,38 +2561,55 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#1A1F36',
     paddingHorizontal: 6,
-    fontFamily: 'System',
+    fontFamily: 'SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+    textAlign: 'left',
+    letterSpacing: -0.3,
   },
   numericCell: {
-    textAlign: 'right',
+    textAlign: 'left',
+  },
+  tickerBadge: {
+    backgroundColor: '#E8E8E8',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    alignSelf: 'flex-start',
   },
   tableTickerCell: {
     fontWeight: '700',
-    color: '#635BFF',
+    color: '#1A1F36',
+    letterSpacing: -0.3,
+    paddingHorizontal: 0,
   },
   positiveReturn: {
     color: '#00D924',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   negativeReturn: {
     color: '#FF6B6B',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   positiveAlpha: {
     color: '#00D924',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   negativeAlpha: {
     color: '#FF6B6B',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   hitText: {
     color: '#00D924',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   missText: {
     color: '#FF6B6B',
     fontWeight: '600',
+    letterSpacing: -0.3,
   },
   tweetLinkCell: {
     paddingHorizontal: 6,
@@ -1527,6 +2657,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
     marginLeft: 10,
+    letterSpacing: -0.4,
   },
   seeMoreHint: {
     marginTop: 12,
@@ -1534,6 +2665,7 @@ const styles = StyleSheet.create({
     color: '#4F566B',
     fontWeight: '500',
     textAlign: 'center',
+    letterSpacing: -0.32,
   },
 
   // Metrics Grid with Dropdown
@@ -1572,6 +2704,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#1A1F36',
+    letterSpacing: -0.3,
   },
   dropdownArrow: {
     fontSize: 10,
@@ -1605,26 +2738,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#F6F9FC',
   },
   dropdownItemText: {
-    fontSize: 13,
-    color: '#1A1F36',
+    fontSize: 12,
+    color: '#5F6368',
+    letterSpacing: -0.4,
   },
   dropdownItemTextActive: {
     fontWeight: '600',
-    color: '#635BFF',
+    color: '#5F6368',
+    letterSpacing: -0.4,
   },
 
-  // Table Column Widths
+  // Table Column Widths - adjusted for dynamic content
   colTicker: {
-    flex: 0.7,
+    flex: 0.6,
   },
   colCompany: {
-    flex: 1.8,
+    flex: 1.5,
   },
   colDate: {
-    flex: 1,
+    flex: 1.1,
   },
   colValue: {
-    flex: 0.9,
+    flex: 0.8,
   },
   colDividend: {
     flex: 0.7,
@@ -1632,11 +2767,67 @@ const styles = StyleSheet.create({
   colReturn: {
     flex: 0.9,
   },
-  colHit: {
-    flex: 0.8,
+  colChart: {
+    flex: 1.2,
   },
   colTweet: {
     flex: 0.5,
+  },
+  colPosts: {
+    flex: 2.0,
+    paddingHorizontal: 4,
+  },
+
+  // Tweet/Post Styles
+  tweetCard: {
+    width: '100%',
+    paddingVertical: 2,
+  },
+  tweetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 6,
+  },
+  xIcon: {
+    fontSize: 12,
+    color: '#000000',
+  },
+  tweetHandle: {
+    fontSize: 12,
+    color: '#536471',
+    fontWeight: '500',
+  },
+  tweetText: {
+    fontSize: 13,
+    color: '#0F1419',
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  tweetDate: {
+    fontSize: 10,
+    color: '#6B7C93',
+    opacity: 0.8,
+  },
+
+  // Alpha Badge Styles
+  alphaBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  positiveAlphaBadge: {
+    backgroundColor: '#E6F4EA',  // Light mint green background
+  },
+  negativeAlphaBadge: {
+    backgroundColor: '#FCE8E8',  // Light red background
+  },
+  alphaBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: -0.3,
   },
 
   // Loading State
@@ -1649,5 +2840,108 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 16,
     color: '#425466',
+    letterSpacing: -0.4,
+  },
+
+  // Profile Section
+  profileSection: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  profileLeft: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 16,
+    flex: 1,
+  },
+  profileImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#F5F5F5',
+  },
+  profileInfo: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  profileMetrics: {
+    flexDirection: 'row',
+    gap: 12,
+    marginLeft: 20,
+  },
+  profileNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  profileName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A1F36',
+    letterSpacing: -0.45,
+  },
+  verifiedBadge: {
+    fontSize: 16,
+    color: '#1DA1F2',
+  },
+  profileUsername: {
+    fontSize: 14,
+    color: '#6B7C93',
+    letterSpacing: -0.35,
+  },
+  favouriteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    borderRadius: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    alignSelf: 'flex-start',
+  },
+  favouriteButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#425466',
+    letterSpacing: -0.35,
+  },
+
+  // Show More Trades Button Styles
+  showMoreTradesButtonContainer: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#FAFBFC',
+    borderTopWidth: 1,
+    borderTopColor: '#E3E8EF',
+    alignItems: 'center',
+  },
+  showMoreTradesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#635BFF',
+    borderRadius: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+  },
+  showMoreTradesButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#635BFF',
+    letterSpacing: -0.35,
   },
 });

@@ -6,14 +6,18 @@
 
 import { fetchMockAnalysis } from './providers/mockProvider';
 import { fetchRealAnalysis } from './providers/realProvider';
+import { fetchTweetAnalysis } from './providers/tweetProvider';
 import { saveAnalysis, fetchAnalysis } from '../utils/supabaseClient';
 
 /** @typedef {import('../types/analysis').AnalysisResult} AnalysisResult */
 
 /**
  * Analyzes a Twitter handle's stock performance
- * Automatically chooses between mock and real data providers
- * based on EXPO_PUBLIC_USE_MOCK environment variable
+ * Provider selection (in order of priority):
+ * 1. Cached data from Supabase
+ * 2. EXPO_PUBLIC_USE_TWEETS='true' -> local tweet fetching + prefilter
+ * 3. EXPO_PUBLIC_USE_MOCK='false' -> real provider (external API)
+ * 4. Default -> mock provider (dummy data)
  * Saves results to Supabase after analysis
  *
  * @param {string} handle - Twitter handle (with or without @)
@@ -33,7 +37,28 @@ export async function analyzeHandle(handle, options = {}) {
       return { ...cachedResult, dataSource: 'supabase-cache' };
     }
 
-    // SECOND: Check if we should use mock data (default to true)
+    // SECOND: Check if we should use tweet provider (local 2-stage fetch + prefilter)
+    const useTweets = process.env.EXPO_PUBLIC_USE_TWEETS === 'true';
+    if (useTweets) {
+      console.log('[fintwitService] Using TWEET provider (local 2-stage fetch + prefilter)');
+      try {
+        const result = await fetchTweetAnalysis(handle, options);
+        
+        // Save result to Supabase (non-blocking)
+        saveAnalysis(result).catch(err => {
+          console.warn('[fintwitService] Exception saving to Supabase:', err);
+        });
+        
+        return result;
+      } catch (error) {
+        console.warn('[fintwitService] Tweet provider failed, falling back to mock data');
+        console.warn('[fintwitService] Error details:', error.message);
+        const fallbackResult = await fetchMockAnalysis(handle);
+        return { ...fallbackResult, dataSource: 'mock-fallback' };
+      }
+    }
+
+    // THIRD: Check if we should use mock data (default to true)
     const useMock = process.env.EXPO_PUBLIC_USE_MOCK !== 'false';
     console.log(`[fintwitService] No cached data, using ${useMock ? 'MOCK' : 'REAL'} data provider`);
 

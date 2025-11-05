@@ -13,6 +13,8 @@ import PaySuccessScreen from './screens/PaySuccessScreen';
 import PayCancelScreen from './screens/PayCancelScreen';
 import AuthLoadingScreen from './screens/AuthLoadingScreen';
 import AuthResetScreen from './screens/AuthResetScreen';
+import AuthGateScreen from './screens/AuthGateScreen';
+import AnalysisLoadingScreen from './screens/AnalysisLoadingScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import AccountScreen from './screens/AccountScreen';
@@ -58,6 +60,8 @@ function AppNavigator() {
         }}
       >
         <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="AnalysisLoading" component={AnalysisLoadingScreen} />
+        <Stack.Screen name="AuthGate" component={AuthGateScreen} />
         <Stack.Screen name="Portal" component={PortalScreen} />
         <Stack.Screen name="SignIn" component={SignInScreen} />
         <Stack.Screen name="SignUp" component={SignUpScreen} />
@@ -79,6 +83,8 @@ const linking = {
   config: {
     screens: {
       Home: '',
+      AnalysisLoading: 'analysis-loading',
+      AuthGate: 'auth-gate',
       Portal: 'portal',
       SignIn: 'signin',
       SignUp: 'signup',
@@ -100,6 +106,63 @@ export default function App() {
       document.documentElement.style.height = '100%';
       document.body.style.height = '100%';
       document.body.style.overflowY = 'auto';
+
+      // Inject SF Pro font
+      const style = document.createElement('style');
+      style.textContent = `
+        @font-face {
+          font-family: 'SF Pro Display';
+          src: url('/SF-Pro-Display-Regular.otf') format('opentype');
+          font-weight: 400;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Display';
+          src: url('/SF-Pro-Display-Medium.otf') format('opentype');
+          font-weight: 500;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Display';
+          src: url('/SF-Pro-Display-Semibold.otf') format('opentype');
+          font-weight: 600;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Display';
+          src: url('/SF-Pro-Display-Bold.otf') format('opentype');
+          font-weight: 700;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Text';
+          src: url('/SF-Pro-Text-Regular.otf') format('opentype');
+          font-weight: 400;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Text';
+          src: url('/SF-Pro-Text-Medium.otf') format('opentype');
+          font-weight: 500;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Text';
+          src: url('/SF-Pro-Text-Semibold.otf') format('opentype');
+          font-weight: 600;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: 'SF Pro Text';
+          src: url('/SF-Pro-Text-Bold.otf') format('opentype');
+          font-weight: 700;
+          font-style: normal;
+        }
+        * {
+          font-family: 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+        }
+      `;
+      document.head.appendChild(style);
     }
   }, []);
 
