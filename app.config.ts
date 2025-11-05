@@ -7,6 +7,10 @@ const config: ExpoConfig = {
   slug: "alphahandle",
   extra: {
     MARKET_BASE_URL: process.env.MARKET_BASE_URL || "https://alphahandle-api2.onrender.com"
+  },
+  web: {
+    bundler: "metro",
+    output: "static"
   }
 };
 

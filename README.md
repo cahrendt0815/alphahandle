@@ -91,26 +91,19 @@ npm run dev:full
 
 This project can be deployed to Vercel as a static site.
 
-**Build Command:**
-```bash
-npm run build
-```
-
-**Output Directory:**
-```
-dist
-```
-
 **Vercel Configuration:**
-- **Root Directory**: `fintwit-performance`
+- **Root Directory**: `.` (repo root)
+- **Framework Preset**: `Other`
 - **Build Command**: `npm run build`
 - **Output Directory**: `dist`
-- **Framework**: Other
+- **Install Command**: `npm install`
 
-**Notes:**
+**Build Details:**
 - The build command runs `expo export --platform web` which generates static HTML/CSS/JS files in the `dist` directory
-- Make sure to set all required environment variables in Vercel's environment settings
 - The exported site is fully static and doesn't require a Node.js runtime
+- Make sure to set all required environment variables in Vercel's environment settings
+
+**Note:** The Python FastAPI backend (`server/main.py`) and other Node.js servers (analysis server, etc.) are deployed separately (e.g., on Render) and accessed via environment variables like `MARKET_BASE_URL` and `ANALYSIS_BASE_URL`.
 
 ## Market Data API
 
