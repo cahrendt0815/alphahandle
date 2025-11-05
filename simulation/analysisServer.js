@@ -61,28 +61,39 @@ if (DEEPSEEK_API_KEY) {
 app.use(cors());
 app.use(express.json());
 
-// Load companies data once at startup
+// Load companies data from Supabase Storage
+const COMPANY_TICKERS_URL =
+  process.env.EXPO_PUBLIC_COMPANY_TICKERS_URL ||
+  "https://vjapeusemdciohsvnelx.supabase.co/storage/v1/object/sign/SEC_Company_Dataset/company_tickers.json?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV82MGFjOWExYi1lMDQ5LTQ3YWMtOTFiYy1mNTBkNmQwZmZhZWUiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJTRUNfQ29tcGFueV9EYXRhc2V0L2NvbXBhbnlfdGlja2Vycy5qc29uIiwiaWF0IjoxNzYyMzc2NDYwLCJleHAiOjE3OTM5MTI0NjB9.X1mioGFEwoV88cB52udqaxuNg8DuBvq7-g1CeEAxjYU";
+
 let COMPANIES = [];
-try {
-  const companiesPath = path.join(__dirname, '..', 'data', 'company_tickers.json');
-  const companiesData = fs.readFileSync(companiesPath, 'utf8');
-  const rawData = JSON.parse(companiesData);
 
-  // Transform SEC data to our format
-  for (const key in rawData) {
-    const entry = rawData[key];
-    if (entry.ticker && entry.title) {
-      COMPANIES.push({
-        ticker: entry.ticker.toUpperCase(),
-        name: entry.title
-      });
+/**
+ * Load companies from Supabase Storage
+ */
+async function loadCompanies() {
+  try {
+    console.log('[AnalysisServer] Fetching company tickers from Supabase...');
+    const response = await axios.get(COMPANY_TICKERS_URL, { timeout: 30000 });
+    const rawData = response.data;
+
+    // Transform SEC data to our format
+    for (const key in rawData) {
+      const entry = rawData[key];
+      if (entry.ticker && entry.title) {
+        COMPANIES.push({
+          ticker: entry.ticker.toUpperCase(),
+          name: entry.title
+        });
+      }
     }
-  }
 
-  console.log(`[AnalysisServer] Loaded ${COMPANIES.length} companies from SEC database`);
-} catch (error) {
-  console.error('[AnalysisServer] Error loading companies:', error.message);
-  process.exit(1);
+    console.log(`[AnalysisServer] Loaded ${COMPANIES.length} companies from SEC database`);
+  } catch (error) {
+    console.error('[AnalysisServer] Error loading companies:', error.message);
+    console.error('[AnalysisServer] Failed to fetch company tickers. Server cannot start.');
+    process.exit(1);
+  }
 }
 
 /**
@@ -1145,13 +1156,17 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Start server
-app.listen(ANALYSIS_PORT, () => {
-  console.log(`\n✅ Analysis Server running on http://localhost:${ANALYSIS_PORT}`);
-  console.log(`📋 Endpoint: GET /api/analyze?handle=@username&months=12`);
-  console.log(`🔑 Twitter API: ${TWITTER_API_KEY ? 'Configured ✅' : 'Missing ❌'}`);
-  console.log(`📊 Companies loaded: ${COMPANIES.length}\n`);
-});
+// Start server after loading companies
+(async () => {
+  await loadCompanies();
+  
+  app.listen(ANALYSIS_PORT, () => {
+    console.log(`\n✅ Analysis Server running on http://localhost:${ANALYSIS_PORT}`);
+    console.log(`📋 Endpoint: GET /api/analyze?handle=@username&months=12`);
+    console.log(`🔑 Twitter API: ${TWITTER_API_KEY ? 'Configured ✅' : 'Missing ❌'}`);
+    console.log(`📊 Companies loaded: ${COMPANIES.length}\n`);
+  });
+})();
 
 // Export selected functions for reuse (e.g., twitterServer.js)
 module.exports = {

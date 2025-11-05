@@ -6,10 +6,26 @@
  * - Whole-word ticker symbols (e.g., AAPL)
  * - Simplified company names (e.g., Amazon, Danaher)
  *
- * Uses SEC company tickers from https://www.sec.gov/files/company_tickers.json
+ * Uses SEC company tickers from Supabase Storage
  */
 
-import companyTickersData from '../data/company_tickers.json';
+const COMPANY_TICKERS_URL =
+  process.env.EXPO_PUBLIC_COMPANY_TICKERS_URL ||
+  "https://vjapeusemdciohsvnelx.supabase.co/storage/v1/object/sign/SEC_Company_Dataset/company_tickers.json?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV82MGFjOWExYi1lMDQ5LTQ3YWMtOTFiYy1mNTBkNmQwZmZhZWUiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJTRUNfQ29tcGFueV9EYXRhc2V0L2NvbXBhbnlfdGlja2Vycy5qc29uIiwiaWF0IjoxNzYyMzc2NDYwLCJleHAiOjE3OTM5MTI0NjB9.X1mioGFEwoV88cB52udqaxuNg8DuBvq7-g1CeEAxjYU";
+
+/**
+ * Load company tickers from Supabase Storage
+ */
+export async function loadCompanyTickers() {
+  try {
+    const response = await fetch(COMPANY_TICKERS_URL);
+    if (!response.ok) throw new Error(`Failed to fetch company tickers: ${response.status}`);
+    return await response.json();
+  } catch (err) {
+    console.error("Error loading company tickers:", err);
+    return {};
+  }
+}
 
 export interface Company {
   ticker: string;
@@ -62,9 +78,10 @@ function cleanCompanyName(title: string): string {
 }
 
 /**
- * Load companies from SEC JSON file
+ * Load companies from Supabase Storage
  */
-export function loadCompanies(): Company[] {
+export async function loadCompanies(): Promise<Company[]> {
+  const companyTickersData = await loadCompanyTickers();
   const secData: Record<string, SECCompanyData> = companyTickersData as any;
 
   const companies: Company[] = [];
@@ -236,7 +253,7 @@ async function runTests() {
   console.log('🧪 Testing Stock Mention Prefilter\n');
 
   // Load companies
-  const companies = loadCompanies();
+  const companies = await loadCompanies();
   console.log(`Loaded ${companies.length} companies\n`);
 
   // Print first 20 companies to verify data
