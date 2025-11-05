@@ -4,6 +4,7 @@
  */
 
 import { Platform } from 'react-native';
+import { MARKET_BASE_URL } from '../lib/appEnv';
 
 const CACHE_PREFIX = 'profile_cache_v2_';
 const CACHE_DURATION = 90 * 24 * 60 * 60 * 1000; // 3 months in milliseconds
@@ -86,11 +87,9 @@ export async function fetchProfileImage(handle) {
     console.log('[ProfileCache] Cached profile is fallback, fetching fresh data');
   }
 
-  // Fetch from backend API (which proxies to TwitterAPI.io)
+  // Fetch from backend API (FastAPI server on port 8000)
   const cleanHandle = handle.replace('@', '');
-  const MARKET_BASE_URL = process.env.EXPO_PUBLIC_MARKET_BASE_URL || 'http://localhost:8000';
-
-  console.log('[ProfileCache] Fetching from backend for:', cleanHandle);
+  console.log(`[ProfileCache] Fetching from ${MARKET_BASE_URL}/api/profile/${cleanHandle}`);
 
   try {
     const response = await fetch(`${MARKET_BASE_URL}/api/profile/${cleanHandle}`);

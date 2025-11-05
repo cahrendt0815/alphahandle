@@ -8,6 +8,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
+const { fetchTweetsWithLimit } = require('./analysisServer');
 
 // Load .env from parent directory
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
@@ -27,196 +28,67 @@ if (!TWITTER_API_KEY) {
 app.use(cors());
 app.use(express.json());
 
+// Simple in-memory cache
+const CACHE_TTL_MS = 60 * 1000;
+const responseCache = new Map(); // key -> { data, t }
+
 /**
- * POST /api/tweets/search
- * Fetches tweets matching the given query with full pagination
- *
- * Query Parameters:
- * - query: Twitter search query (e.g., "from:buccocapital -is:retweet -is:reply since:2024-10-17")
- * - queryType: "Latest" or "Top"
- *
- * Response:
- * {
- *   tweets: [...],
- *   count: 123
- * }
+ * GET /api/tweets/search
+ * Validates input, checks cache, forwards to twitterapi.io via fetchTweetsWithLimit,
+ * enforces a 20s overall timeout, and returns structured JSON.
  */
 app.get('/api/tweets/search', async (req, res) => {
-  try {
-    const { query, queryType = 'Latest' } = req.query;
+  const { query, queryType = 'Latest' } = req.query || {};
 
-    if (!query) {
-      return res.status(400).json({
-        error: 'Missing query parameter'
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query parameter' });
+  }
+
+  const cacheKey = JSON.stringify({ query, queryType });
+  const cached = responseCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.t) < CACHE_TTL_MS) {
+    console.log(`[GET /api/tweets/search] query="${query}" (cache hit)`);
+    return res.json(cached.data);
+  }
+
+  console.log(`[GET /api/tweets/search] query="${query}" (fresh fetch)`);
+
+  const handlerPromise = (async () => {
+    try {
+      const tweets = await fetchTweetsWithLimit(query, TWITTER_API_KEY, queryType || 'Latest', 200);
+
+      const payload = {
+        tweets: Array.isArray(tweets) ? tweets : [],
+        count: Array.isArray(tweets) ? tweets.length : 0,
+        has_next_page: false,
+        next_cursor: null
+      };
+
+      // cache it
+      responseCache.set(cacheKey, { data: payload, t: now });
+      return res.json(payload);
+    } catch (err) {
+      console.error('[TwitterServer] fetch error:', err && err.stack ? err.stack : err);
+      const status = (err && err.response && err.response.status) || 500;
+      const details = err && err.message ? err.message : 'Unknown error';
+      return res.status(status >= 400 && status < 600 ? status : 500).json({
+        error: 'Failed to fetch tweets',
+        details
       });
     }
+  })();
 
-    console.log(`[TwitterServer] Fetching tweets for query: "${query}"`);
-    console.log(`[TwitterServer] Query type: ${queryType}`);
+  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('TIMEOUT'), 20000));
 
-    // Fetch tweets with a limit to avoid timeouts and processing delays
-    // 200 tweets is a good balance: 5x more than before, but fast enough to process
-    const tweets = await fetchTweetsWithLimit(query, TWITTER_API_KEY, queryType, 200);
-
-    console.log(`[TwitterServer] ✅ Found ${tweets.length} total tweets`);
-
-    // Return tweets in the expected format
-    res.json({
-      tweets: tweets,
-      count: tweets.length,
-      has_next_page: false,
-      next_cursor: null
-    });
-
-  } catch (error) {
-    console.error('[TwitterServer] Error fetching tweets:', error.message);
-
-    // Handle rate limiting
-    if (error.response && error.response.status === 429) {
-      return res.status(429).json({
-        error: 'Rate limit exceeded',
-        tweets: [],
-        count: 0
-      });
-    }
-
-    res.status(500).json({
-      error: 'Failed to fetch tweets',
-      message: error.message,
-      tweets: [],
-      count: 0
-    });
+  const outcome = await Promise.race([handlerPromise, timeoutPromise]);
+  if (outcome === 'TIMEOUT') {
+    console.warn('[TwitterServer] Request timed out after 20s');
+    return res.status(504).json({ error: 'Request timed out' });
   }
 });
 
-/**
- * Fetch tweets with a maximum limit to avoid timeouts
- * @param {string} query - Twitter search query
- * @param {string} apiKey - Twitter API key
- * @param {string} queryType - "Latest" or "Top"
- * @param {number} maxTweets - Maximum number of tweets to fetch
- * @returns {Promise<Array>} List of tweets
- */
-async function fetchTweetsWithLimit(query, apiKey, queryType, maxTweets) {
-  const baseUrl = 'https://api.twitterapi.io/twitter/tweet/advanced_search';
-  const headers = { 'x-api-key': apiKey };
-  const allTweets = [];
-  const seenTweetIds = new Set();
-  let cursor = null;
-  let lastMinId = null;
-  const maxRetries = 3;
-
-  console.log(`[Twitter] Fetching up to ${maxTweets} tweets...`);
-
-  while (allTweets.length < maxTweets) {
-    // Prepare query parameters
-    const params = {
-      query: cursor || lastMinId ? (lastMinId && !cursor ? `${query} max_id:${lastMinId}` : query) : query,
-      queryType: queryType,
-    };
-
-    // Add cursor if available
-    if (cursor) {
-      params.cursor = cursor;
-    }
-
-    let retryCount = 0;
-    let fetchedInThisIteration = false;
-
-    while (retryCount < maxRetries) {
-      try {
-        // Make API request
-        const response = await axios.get(baseUrl, {
-          headers,
-          params,
-          timeout: 30000,
-        });
-
-        const data = response.data;
-
-        // Extract tweets and metadata
-        const tweets = data.tweets || [];
-        const hasNextPage = data.has_next_page || false;
-        cursor = data.next_cursor || null;
-
-        // Filter out duplicate tweets
-        const newTweets = tweets.filter((tweet) => !seenTweetIds.has(tweet.id));
-
-        // Add new tweet IDs to the set and tweets to the collection (up to max)
-        newTweets.forEach((tweet) => {
-          if (allTweets.length < maxTweets) {
-            seenTweetIds.add(tweet.id);
-            allTweets.push(tweet);
-          }
-        });
-
-        console.log(`[Twitter] Fetched ${newTweets.length} new tweets (${allTweets.length}/${maxTweets} total)`);
-
-        fetchedInThisIteration = true;
-
-        // If no new tweets and no next page, we're done
-        if (newTweets.length === 0 && !hasNextPage) {
-          console.log(`[Twitter] No more tweets available (${allTweets.length} total)`);
-          return allTweets;
-        }
-
-        // If we've reached the max, return early
-        if (allTweets.length >= maxTweets) {
-          console.log(`[Twitter] Reached maximum of ${maxTweets} tweets`);
-          return allTweets;
-        }
-
-        // Update lastMinId from the last tweet if available
-        if (newTweets.length > 0) {
-          lastMinId = newTweets[newTweets.length - 1].id;
-        }
-
-        // If no next page but we have new tweets, try with max_id
-        if (!hasNextPage && newTweets.length > 0 && allTweets.length < maxTweets) {
-          cursor = null; // Reset cursor for max_id pagination
-          break;
-        }
-
-        // If has next page, continue with cursor
-        if (hasNextPage) {
-          break;
-        }
-
-        // If no more pages, we're done
-        return allTweets;
-
-      } catch (error) {
-        retryCount++;
-        if (retryCount === maxRetries) {
-          console.error(`[Twitter] Failed after ${maxRetries} attempts:`, error.message);
-          return allTweets;
-        }
-
-        // Handle rate limiting
-        if (error.response && error.response.status === 429) {
-          console.log('[Twitter] Rate limit reached. Waiting 5 seconds...');
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-        } else {
-          console.log(`[Twitter] Error: ${error.message}. Retrying ${retryCount}/${maxRetries}...`);
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-        }
-      }
-    }
-
-    // If we didn't fetch anything and have no cursor, break
-    if (!fetchedInThisIteration && !cursor && !lastMinId) {
-      break;
-    }
-
-    // Safety check: if we're stuck in a loop without progress
-    if (!fetchedInThisIteration) {
-      console.log('[Twitter] No progress made, stopping pagination');
-      break;
-    }
-  }
-
-  return allTweets;
-}
+// (Removed old inline fetchTweetsWithLimit; using shared implementation)
 
 /**
  * GET /health
@@ -232,7 +104,7 @@ app.get('/health', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n✅ Twitter Proxy Server running on http://localhost:${PORT}`);
   console.log(`📋 Available endpoints:`);
   console.log(`   GET  http://localhost:${PORT}/api/tweets/search?query=...&queryType=Latest`);
@@ -250,3 +122,5 @@ process.on('SIGTERM', () => {
   console.log('\n[TwitterServer] Shutting down gracefully...');
   process.exit(0);
 });
+
+module.exports = app;

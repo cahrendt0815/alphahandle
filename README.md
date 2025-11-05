@@ -16,9 +16,49 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 STRIPE_SECRET_KEY=your_stripe_secret_key
 MARKET_BASE_URL=http://localhost:8000
+ANALYSIS_BASE_URL=http://localhost:8002
+
+# Required for tweet fetching and analysis
+TWITTER_API_KEY=your_twitterapi_io_key
+
+# Required for market data (FastAPI server)
+EODHD_API_TOKEN=your_eodhd_token
+
+# Optional: LLM sentiment analysis (uses keyword-based fallback if not set)
+DEEPSEEK_API_KEY=your_deepseek_key
+
+# Optional: Override default ports
+ANALYSIS_PORT=8002
+MARKET_PORT=8000
 ```
 
 ## Development
+
+### Local Development (Recommended)
+
+Run all services in separate terminals:
+
+**Terminal 1 - Web Frontend (port 8081):**
+```bash
+npm run dev:web
+```
+
+**Terminal 2 - Market API Server (port 8000):**
+```bash
+npm run dev:api
+```
+
+**Terminal 3 - Analysis Server (port 8002):**
+```bash
+npm run dev:analysis
+```
+
+**Or run all at once:**
+```bash
+npm run dev:all
+```
+
+### Individual Services
 
 ### Run the web app:
 ```bash
@@ -44,6 +84,33 @@ pip install -r server/requirements.txt
 ```bash
 npm run dev:full
 ```
+
+## Deployment
+
+### Vercel Static Site Deployment
+
+This project can be deployed to Vercel as a static site.
+
+**Build Command:**
+```bash
+npm run build
+```
+
+**Output Directory:**
+```
+dist
+```
+
+**Vercel Configuration:**
+- **Root Directory**: `fintwit-performance`
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+- **Framework**: Other
+
+**Notes:**
+- The build command runs `expo export --platform web` which generates static HTML/CSS/JS files in the `dist` directory
+- Make sure to set all required environment variables in Vercel's environment settings
+- The exported site is fully static and doesn't require a Node.js runtime
 
 ## Market Data API
 

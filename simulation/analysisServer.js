@@ -1,9 +1,12 @@
 /**
  * Analysis Server - Server-side Tweet Analysis
- * Fetches tweets, filters for stock mentions, analyzes sentiment, fetches prices
- * Returns only the final bullish trades to the client for fast rendering
+ * Pipeline:
+ *  - Fetch tweets from twitterapi.io (fetchTweetsWithLimit/fetchTweetsArchive)
+ *  - Prefilter for cashtags, sentiment (DeepSeek LLM or keyword heuristic)
+ *  - Fetch prices from Market API (FastAPI) and build trades
+ *  - Cache results in-memory and optionally in Supabase via client-side services
  *
- * Port: 8002
+ * Default Port: 8002 (override with ANALYSIS_PORT)
  */
 
 const express = require('express');
@@ -12,12 +15,13 @@ const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const Bottleneck = require('bottleneck');
 
 // Load .env from parent directory
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const app = express();
-const PORT = 8002;
+const ANALYSIS_PORT = process.env.ANALYSIS_PORT || 8002;
 
 // Session storage for progressive loading
 // Structure: { sessionId: { status, totalTweets, stockTweets, bullishTweets, trades, stats, error } }
@@ -137,7 +141,10 @@ app.get('/api/analyze', async (req, res) => {
       tweets = cachedTwitterData.tweets;
     } else {
       console.log(`[AnalysisServer] 🐦 Fetching fresh tweets from Twitter API...`);
-      tweets = await fetchTweetsForHandle(cleanHandle, months, 3600);
+      // Dynamic max tweets: 1000 for 12 months, +500 per additional 12 months, capped at 3000
+      const maxTweets = Math.min(3000, 1000 + Math.ceil(months / 12) * 500);
+      console.log(`[AnalysisServer] Requesting up to ${maxTweets} tweets for ${months} months`);
+      tweets = await fetchTweetsForHandle(cleanHandle, months, maxTweets);
       // Cache the Twitter API result
       twitterCache.set(cacheKey, {
         tweets: tweets,
@@ -310,19 +317,21 @@ async function fetchTweetsForHandle(handle, months, maxTweets) {
   // First attempt: broad query with pagination/max_id
   let tweets = await fetchTweetsWithLimit(query, TWITTER_API_KEY, 'Latest', maxTweets);
 
-  // If we hit a recent-window ceiling (common ~30-40 days), walk back in weekly windows with since/until
+  // If we hit a recent-window ceiling (common ~30-40 days), walk back in date windows with since/until
   if (tweets.length < maxTweets) {
     console.log(`[AnalysisServer] Attempting rolling date-window backfill to extend history...`);
     const seen = new Set(tweets.map(t => t.id));
 
-    // Iterate backwards in 7-day windows from today to sinceDate
+    // Iterate backwards in 14-day windows from today to sinceDate (larger windows = fewer API calls)
     const end = new Date();
     const start = new Date(sinceDate);
     let windowEnd = new Date(end);
+    const MAX_WINDOWS = 30; // Limit to ~14 months of backfill (30 windows * 14 days)
+    let windowCount = 0;
 
-    while (tweets.length < maxTweets && windowEnd > start) {
+    while (tweets.length < maxTweets && windowEnd > start && windowCount < MAX_WINDOWS) {
       const windowStart = new Date(windowEnd);
-      windowStart.setDate(windowStart.getDate() - 7);
+      windowStart.setDate(windowStart.getDate() - 14); // 14-day windows instead of 7
 
       // Clamp windowStart to overall sinceDate
       if (windowStart < start) {
@@ -349,8 +358,13 @@ async function fetchTweetsForHandle(handle, months, maxTweets) {
 
       console.log(`[AnalysisServer] Added ${added} tweets from window (${tweets.length} total)`);
 
-      // Move window back by 7 days
+      // Move window back by 14 days
       windowEnd = new Date(windowStart);
+      windowCount++;
+      
+      if (windowCount >= MAX_WINDOWS) {
+        console.log(`[AnalysisServer] Reached maximum window limit (${MAX_WINDOWS}). Stopping backfill.`);
+      }
     }
   }
 
@@ -372,103 +386,139 @@ async function fetchTweetsForHandle(handle, months, maxTweets) {
  * Fetch tweets with pagination limit using cursor and max_id for deep historical access
  */
 async function fetchTweetsWithLimit(query, apiKey, queryType, maxTweets) {
+  // Environment validation
+  const keyToUse = apiKey || process.env.TWITTER_API_KEY || process.env.TW_BEARER;
+  if (!keyToUse) {
+    throw new Error('Missing TWITTER_API_KEY — please set in .env');
+  }
+
   const baseUrl = 'https://api.twitterapi.io/twitter/tweet/advanced_search';
-  const headers = { 'x-api-key': apiKey };
+  const headers = { 'x-api-key': keyToUse };
+
+  // Bottleneck rate limiter: 1 request every 500ms, maxConcurrent 1
+  if (!global.__twitterLimiter) {
+    global.__twitterLimiter = new Bottleneck({ minTime: 500, maxConcurrent: 1 });
+  }
+  const limiter = global.__twitterLimiter;
+
+  // Simple in-memory cache (60s)
+  if (!global.__twitterCache) {
+    global.__twitterCache = { map: new Map(), ttl: 60 * 1000 };
+  }
+  const cache = global.__twitterCache;
+
   const allTweets = [];
   const seenTweetIds = new Set();
   let cursor = null;
   let lastMinId = null;
+
   const maxRetries = 3;
+  const axiosTimeout = 10000;
+
+  // Helper to perform a single rate-limited request with retries
+  const doRequest = async (paramsObj) => {
+    const cacheKey = JSON.stringify(paramsObj);
+    const now = Date.now();
+    const cached = cache.map.get(cacheKey);
+    if (cached && (now - cached.t) < cache.ttl) {
+      return cached.v;
+    }
+
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < maxRetries) {
+      attempt++;
+      const start = Date.now();
+      try {
+        const resp = await limiter.schedule(() => axios.get(baseUrl, {
+          headers,
+          params: paramsObj,
+          timeout: axiosTimeout,
+          validateStatus: () => true
+        }));
+
+        const ms = Date.now() - start;
+        const status = resp.status;
+
+        if (status >= 200 && status < 300) {
+          console.log(`[Twitter] OK ${status} (${ms}ms) query="${paramsObj.query}"`);
+          cache.map.set(cacheKey, { v: resp, t: now });
+          return resp;
+        }
+
+        // 4xx: do not retry
+        if (status >= 400 && status < 500) {
+          console.warn(`[Twitter] ${status} — not retrying. Query="${paramsObj.query}" Message="${(resp.data && resp.data.error) || 'Client error'}"`);
+          lastErr = new Error(`Twitter API error ${status}`);
+          break;
+        }
+
+        // 5xx: retry
+        console.warn(`[Twitter] ${status} attempt ${attempt}/${maxRetries} — ${ms}ms`);
+        lastErr = new Error(`Server error ${status}`);
+      } catch (e) {
+        lastErr = e;
+        console.warn(`[Twitter] Network error attempt ${attempt}/${maxRetries}: ${e.message}`);
+      }
+
+      // backoff: 1s * attempt
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
+
+    // All retries failed
+    throw new Error(`Failed to fetch tweets after ${maxRetries} attempts: ${(lastErr && lastErr.message) || 'unknown error'}`);
+  };
 
   while (allTweets.length < maxTweets) {
-    // Prepare query parameters
-    const params = {
-      queryType: queryType,
-    };
-
-    // Add cursor if available (for regular pagination)
+    const params = { queryType: queryType };
     if (cursor) {
       params.cursor = cursor;
       params.query = query;
     } else if (lastMinId) {
-      // Add max_id if available (for fetching beyond initial limit)
       params.query = `${query} max_id:${lastMinId}`;
     } else {
       params.query = query;
     }
 
-    let retryCount = 0;
-    let fetchedInThisIteration = false;
     let hasNextPage = false;
     let tweets = [];
     let newTweets = [];
 
-    while (retryCount < maxRetries) {
-      try {
-        const response = await axios.get(baseUrl, {
-          headers,
-          params,
-          timeout: 30000,
-        });
+    const resp = await doRequest(params);
+    const data = resp && resp.data ? resp.data : resp;
 
-        const data = response.data;
-        tweets = data.tweets || [];
-        hasNextPage = data.has_next_page || false;
-        cursor = data.next_cursor || null;
+    tweets = (data && data.tweets) || [];
+    hasNextPage = (data && (data.has_next_page === true)) || false;
+    cursor = (data && data.next_cursor) || null;
 
-        console.log(`[Twitter] Page fetched: ${tweets.length} tweets, hasNextPage: ${hasNextPage}, cursor: ${cursor ? 'present' : 'null'}, lastMinId: ${lastMinId || 'null'}, total so far: ${allTweets.length}`);
+    console.log(`[Twitter] Page fetched: ${tweets.length} tweets, hasNextPage: ${hasNextPage}, cursor: ${cursor ? 'present' : 'null'}, lastMinId: ${lastMinId || 'null'}, total so far: ${allTweets.length}`);
 
-        // Filter out duplicate tweets
-        newTweets = tweets.filter((tweet) => !seenTweetIds.has(tweet.id));
-
-        // Add new tweet IDs to the set and tweets to the collection
-        newTweets.forEach((tweet) => {
-          if (allTweets.length < maxTweets) {
-            seenTweetIds.add(tweet.id);
-            allTweets.push(tweet);
-          }
-        });
-
-        // Update lastMinId from the last tweet if available
-        if (newTweets.length > 0) {
-          lastMinId = newTweets[newTweets.length - 1].id;
-        }
-
-        fetchedInThisIteration = true;
-
-        // Exit retry loop after successful fetch
-        break;
-
-      } catch (error) {
-        retryCount++;
-        if (retryCount === maxRetries) {
-          console.error(`[Twitter] Failed after ${maxRetries} attempts:`, error.message);
-          return allTweets;
-        }
-
-        if (error.response && error.response.status === 429) {
-          console.log('[Twitter] Rate limit. Waiting 5 seconds...');
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-        } else {
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-        }
-      }
+    newTweets = Array.isArray(tweets) ? tweets.filter((tw) => tw && !seenTweetIds.has(tw.id)) : [];
+    for (const tw of newTweets) {
+      if (allTweets.length >= maxTweets) break;
+      seenTweetIds.add(tw.id);
+      allTweets.push(tw);
     }
 
-    // If no new tweets and no next page, break the loop
-    if (!fetchedInThisIteration || (allTweets.length > 0 && tweets.length === 0 && !hasNextPage)) {
-      console.log(`[Twitter] Stopping: fetchedInThisIteration=${fetchedInThisIteration}, tweets.length=${tweets.length}, hasNextPage=${hasNextPage}`);
+    if (newTweets.length > 0) {
+      lastMinId = newTweets[newTweets.length - 1].id;
+    }
+
+    // Stop if no tweets and no next page
+    if ((tweets.length === 0 && !hasNextPage)) {
+      console.log('[Twitter] Stopping: no more results');
       break;
     }
 
-    // If no next page but we have new tweets, try with max_id
+    // Try max_id path if needed
     if (!hasNextPage && newTweets.length > 0) {
       console.log(`[Twitter] 🔄 Switching to max_id pagination. Last tweet ID: ${lastMinId}`);
-      cursor = null; // Reset cursor for max_id pagination
+      cursor = null;
       continue;
     }
 
-    // If no next page and no new tweets with max_id, we're done
     if (!hasNextPage && !cursor && lastMinId) {
       console.log(`[Twitter] 🛑 No more tweets available with max_id pagination`);
       break;
@@ -514,7 +564,8 @@ async function fetchTweetsArchive(query, limit) {
  */
 function filterForStockMentions(tweets, companies) {
   return tweets.filter(tweet => {
-    const text = tweet.text || '';
+    // Extract text from multiple possible fields
+    const text = tweet.text || tweet.full_text || tweet.content || tweet.body || '';
 
     // ONLY accept tweets with $TICKER pattern (cashtag)
     const dollarTickerPattern = /\$([A-Z]{1,5})\b/g;
@@ -523,9 +574,11 @@ function filterForStockMentions(tweets, companies) {
     return dollarMatches && dollarMatches.length > 0;
   }).map(tweet => {
     // Find the matching company for each tweet
-    const matchedCompany = findMatchingCompany(tweet.text, companies);
+    const text = tweet.text || tweet.full_text || tweet.content || tweet.body || '';
+    const matchedCompany = findMatchingCompany(text, companies);
     return {
       ...tweet,
+      text: text, // Ensure text field is set
       ticker: matchedCompany ? matchedCompany.ticker : null,
       companyName: matchedCompany ? matchedCompany.name : null
     };
@@ -559,7 +612,9 @@ async function filterForBullishSentiment(stockTweets) {
     return await filterForBullishSentimentLLM(stockTweets);
   } else {
     return stockTweets.filter(tweet => {
-      return isBullishOnKeywords(tweet.text, tweet.ticker, tweet.companyName);
+      // Extract text from multiple possible fields
+      const text = tweet.text || tweet.full_text || tweet.content || tweet.body || '';
+      return isBullishOnKeywords(text, tweet.ticker, tweet.companyName);
     });
   }
 }
@@ -591,9 +646,11 @@ async function filterForBullishSentimentLLM(stockTweets) {
     }
 
     // Create the prompt with all tweets in the batch
-    const tweetsForAnalysis = batch.map((tweet, idx) =>
-      `${idx + 1}. [${tweet.ticker}] "${tweet.text}"`
-    ).join('\n\n');
+    const tweetsForAnalysis = batch.map((tweet, idx) => {
+      // Extract text from multiple possible fields
+      const text = tweet.text || tweet.full_text || tweet.content || tweet.body || '';
+      return `${idx + 1}. [${tweet.ticker}] "${text}"`;
+    }).join('\n\n');
 
     const systemPrompt = `You are an expert in financial sentiment analysis. Analyze each tweet below and determine if:
 1) The ticker mentioned is ACTUALLY referring to a stock (not a common word)
@@ -974,11 +1031,19 @@ async function fetchPricesAndBuildTrades(bullishTweets) {
 
       const stockReturn = ((priceData.latestPrice - priceData.entryPrice) / priceData.entryPrice) * 100;
 
+      // Extract tweet text from multiple possible fields
+      const tweetText = tweet.text || tweet.full_text || tweet.content || tweet.body || '';
+      const tweetTextTruncated = tweetText.substring(0, 200);
+      
+      if (!tweetText && trades.length < 3) {
+        console.warn(`[AnalysisServer] Tweet ${tweet.id} has no text field. Available fields:`, Object.keys(tweet));
+      }
+
       trades.push({
         id: tweet.id,
         ticker: ticker,
         company: tweet.companyName,
-        tweetText: tweet.text.substring(0, 200),
+        tweetText: tweetTextTruncated,
         dateMentioned: tweetDate,
         tweetDate: tweetDate,
         tweetUrl: `https://twitter.com/i/web/status/${tweet.id}`,
@@ -1074,16 +1139,22 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'analysis-server',
-    port: PORT,
+    port: ANALYSIS_PORT,
     twitterApiKey: TWITTER_API_KEY ? 'configured' : 'missing',
     companies: COMPANIES.length
   });
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`\n✅ Analysis Server running on http://localhost:${PORT}`);
+app.listen(ANALYSIS_PORT, () => {
+  console.log(`\n✅ Analysis Server running on http://localhost:${ANALYSIS_PORT}`);
   console.log(`📋 Endpoint: GET /api/analyze?handle=@username&months=12`);
   console.log(`🔑 Twitter API: ${TWITTER_API_KEY ? 'Configured ✅' : 'Missing ❌'}`);
   console.log(`📊 Companies loaded: ${COMPANIES.length}\n`);
 });
+
+// Export selected functions for reuse (e.g., twitterServer.js)
+module.exports = {
+  fetchTweetsWithLimit,
+  fetchTweetsArchive
+};

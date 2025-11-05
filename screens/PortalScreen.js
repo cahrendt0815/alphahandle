@@ -34,6 +34,7 @@ import TargetIcon from '../components/TargetIcon';
 import StarIcon from '../components/StarIcon';
 import MiniChart from '../components/MiniChart';
 import { analyzeHandle, getCachedAnalysis} from '../services/fintwitService';
+import { ANALYSIS_BASE_URL } from '../lib/appEnv';
 import { addFavorite, listFavorites } from '../services/favorites';
 import { analyzeHandleIncremental } from '../services/incrementalAnalysis';
 import { fetchProfileImage } from '../services/profileCache';
@@ -82,10 +83,12 @@ export default function PortalScreen({ navigation, route }) {
   // Incremental loading state
   const [visibleTradesCount, setVisibleTradesCount] = useState(10);
   const [allTrades, setAllTrades] = useState([]);
+  const [analysisCompleted, setAnalysisCompleted] = useState(false); // Track if analysis has completed (even if 0 trades)
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState('');
   const [sessionId, setSessionId] = useState(null);
   const [hasMoreResults, setHasMoreResults] = useState(false);
+  const [analysisError, setAnalysisError] = useState(null);
   // Favourites state
   const [favourites, setFavourites] = useState([]);
   const [favSortKey, setFavSortKey] = useState('handle'); // handle|return|alpha|hit
@@ -155,6 +158,8 @@ export default function PortalScreen({ navigation, route }) {
   const loadAnalysis = async (handle) => {
     let mounted = true;
     setAnalysisLoading(true);
+    setAnalysisError(null); // Clear previous errors
+    setAnalysisCompleted(false); // Reset analysis completed flag
     setVisibleTradesCount(10); // Reset to show first 10
     setAllTrades([]);
     setProcessingProgress(0);
@@ -191,15 +196,37 @@ export default function PortalScreen({ navigation, route }) {
       }
 
       // Call server-side analysis endpoint with progressive loading
-      console.log(`[Portal] Calling analysis server...`);
-      const analysisResponse = await fetch(`http://localhost:8002/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
+      console.log(`[Portal] Calling analysis server at ${ANALYSIS_BASE_URL}/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
+      
+      // Dynamic timeout based on months requested: 60s for 12 months, +30s per additional 12 months
+      const timeoutMs = Math.min(180000, 60000 + Math.ceil(timelineMonths / 12) * 30000); // Max 3 minutes
+      console.log(`[Portal] Using timeout: ${timeoutMs / 1000}s for ${timelineMonths} months`);
+      
+      let analysisResponse;
+      try {
+        analysisResponse = await fetch(`${ANALYSIS_BASE_URL}/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`, {
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+      } catch (fetchError) {
+        if (fetchError.name === 'AbortError' || fetchError.name === 'TimeoutError') {
+          throw new Error(`Analysis timeout after ${timeoutMs / 1000}s. For ${timelineMonths} months, this may take longer. The analysis server may still be processing. Try refreshing in a moment.`);
+        }
+        if (fetchError.message && (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('ECONNREFUSED'))) {
+          throw new Error(`Cannot connect to analysis server at ${ANALYSIS_BASE_URL}. Please start it with: npm run dev:analysis`);
+        }
+        throw fetchError;
+      }
 
       if (!analysisResponse.ok) {
-        throw new Error(`Analysis server error: ${analysisResponse.status}`);
+        const errorText = await analysisResponse.text().catch(() => 'Unknown error');
+        throw new Error(`Analysis server error ${analysisResponse.status}: ${errorText.substring(0, 200)}`);
       }
 
       const analysisData = await analysisResponse.json();
       console.log(`[Portal] ✅ First batch complete:`, analysisData);
+      console.log(`[Portal DEBUG] analysisData.trades:`, analysisData.trades);
+      console.log(`[Portal DEBUG] analysisData.trades.length:`, analysisData.trades?.length);
+      console.log(`[Portal DEBUG] analysisData.stats:`, analysisData.stats);
 
       if (!mounted) return;
 
@@ -220,6 +247,7 @@ export default function PortalScreen({ navigation, route }) {
       setAllTrades(analysisData.trades);
       setHasMoreResults(analysisData.hasMore || false);
       setAnalysisLoading(false);
+      setAnalysisCompleted(true); // Mark analysis as completed
       setIsRefreshing(analysisData.hasMore); // Keep showing refreshing indicator if more results coming
 
       // Animate in
@@ -252,6 +280,7 @@ export default function PortalScreen({ navigation, route }) {
         setAnalysisLoading(false);
         setIsRefreshing(false);
         setProcessingStatus('');
+        setAnalysisError(error.message || 'Failed to fetch analysis. Make sure the analysis server is running.');
       }
     }
 
@@ -299,6 +328,7 @@ export default function PortalScreen({ navigation, route }) {
           console.log(`[Portal] ✅ Background processing complete! Total trades: ${data.trades.length}`);
           setIsRefreshing(false);
           setProcessingStatus('');
+          setAnalysisCompleted(true); // Ensure flag is set when polling completes
           setHasMoreResults(false);
           return;
         }
@@ -308,6 +338,7 @@ export default function PortalScreen({ navigation, route }) {
           console.error(`[Portal] Background processing error:`, data.error);
           setIsRefreshing(false);
           setProcessingStatus('');
+          setAnalysisCompleted(true); // Mark as completed even on error
           return;
         }
 
@@ -594,9 +625,13 @@ export default function PortalScreen({ navigation, route }) {
     if (allTrades && allTrades.length > 0) {
       console.log('[Portal DEBUG] ✅ Using incremental data with', allTrades.length, 'total trades');
       trades = [...allTrades];
+    } else if (analysisCompleted) {
+      // Analysis completed but found 0 trades - show empty state
+      console.log('[Portal DEBUG] ✅ Analysis completed with 0 trades');
+      trades = [];
     } else {
-      console.log('[Portal DEBUG] ❌ Falling back to DUMMY data');
-      // Fallback to dummy data
+      // No analysis has been run yet - show dummy data
+      console.log('[Portal DEBUG] ⚠️ Falling back to DUMMY data (no analysis yet)');
       const dummyTrades = getDummyTrades();
       trades = [dummyTrades[0]];
     }
@@ -1052,6 +1087,18 @@ export default function PortalScreen({ navigation, route }) {
               </View>
             )}
 
+            {/* Error State */}
+            {analysisError && !data && !analysisLoading && (
+              <View style={styles.errorSection}>
+                <Text style={styles.errorTitle}>⚠️ Analysis Server Error</Text>
+                <Text style={styles.errorMessage}>{analysisError}</Text>
+                <Text style={styles.errorHelp}>
+                  To start the analysis server, run:{'\n'}
+                  <Text style={styles.errorCode}>npm run dev:analysis</Text>
+                </Text>
+              </View>
+            )}
+
             {/* Results Section */}
             {data && (
               <Animated.View style={{ opacity: fadeAnim }}>
@@ -1273,7 +1320,7 @@ export default function PortalScreen({ navigation, route }) {
                               <Text style={styles.tweetHandle}>@{twitterHandle}</Text>
                             </View>
                             <Text style={styles.tweetText} numberOfLines={2}>
-                              {trade.tweetText || 'Just launched this free tool that lets you convert tweets and threads int...'}
+                              {trade.tweetText || 'Tweet text unavailable'}
                             </Text>
                             <Text style={styles.tweetDate}>
                               {formatDate(trade.dateMentioned)}
@@ -2220,6 +2267,47 @@ const styles = StyleSheet.create({
     color: '#6B7C93',
     fontWeight: '500',
     letterSpacing: -0.4,
+  },
+  errorSection: {
+    paddingVertical: 80,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FED7D7',
+    marginTop: 20,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#C53030',
+    marginBottom: 12,
+    letterSpacing: -0.45,
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#742A2A',
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 20,
+    letterSpacing: -0.35,
+  },
+  errorHelp: {
+    fontSize: 13,
+    color: '#6B7C93',
+    textAlign: 'center',
+    lineHeight: 20,
+    letterSpacing: -0.32,
+  },
+  errorCode: {
+    fontFamily: 'monospace',
+    backgroundColor: '#F7FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    color: '#2D3748',
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,
