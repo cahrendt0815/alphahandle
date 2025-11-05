@@ -1,3 +1,11 @@
+# Alphahandle Staging
+
+This branch is used for testing deployments before production.
+
+Last updated: 2025-11-05 – trigger for Vercel staging deployment.
+
+---
+
 # Fintwit Performance
 
 Track and analyze the performance of financial Twitter accounts.
