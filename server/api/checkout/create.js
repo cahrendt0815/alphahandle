@@ -49,7 +49,7 @@ module.exports = async (req, res) => {
     }
 
     // Get app URL from environment (fallback to localhost for dev)
-    const appUrl = process.env.APP_URL || 'http://localhost:8083';
+    const appUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_URL || 'http://localhost:8083';
 
     // Build success URL with redirect context
     let successUrl = `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`;

@@ -79,7 +79,7 @@ function AppNavigator() {
 
 // Linking configuration for web URLs
 const linking = {
-  prefixes: ['http://localhost:8083', 'https://localhost:8083'],
+  prefixes: [process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:8083'],
   config: {
     screens: {
       Home: '',

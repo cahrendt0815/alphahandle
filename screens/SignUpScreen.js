@@ -15,7 +15,9 @@ import { PrimaryButton } from '../components/StripeButton';
 import { supabase } from '../utils/supabaseClient';
 import GoogleLogo from '../components/GoogleLogo';
 
-const APP_URL = 'http://localhost:8083';
+const APP_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin
+  : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:8083');
 
 export default function SignUpScreen({ route }) {
   const { user, signInWithGoogle } = useAuth();

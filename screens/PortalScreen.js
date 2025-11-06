@@ -299,7 +299,7 @@ export default function PortalScreen({ navigation, route }) {
         attempts++;
         console.log(`[Portal] Polling for more results (attempt ${attempts}/${maxAttempts})...`);
 
-        const response = await fetch(`http://localhost:8002/api/analyze/results/${sid}`);
+        const response = await fetch(`${ANALYSIS_BASE_URL}/api/analyze/results/${sid}`);
 
         if (!response.ok) {
           console.error(`[Portal] Polling error: ${response.status}`);

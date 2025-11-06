@@ -17,7 +17,7 @@ module.exports = async (req, res) => {
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
     const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-    const appUrl = process.env.APP_URL || 'http://localhost:8083';
+    const appUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_URL || 'http://localhost:8083';
 
     if (!stripeSecretKey) {
       console.error('[Stripe Portal] STRIPE_SECRET_KEY not configured');
