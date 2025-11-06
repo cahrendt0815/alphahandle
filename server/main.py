@@ -17,7 +17,7 @@ EODHD_BASE_URL = 'https://eodhd.com/api'
 # ============================================================================
 # Twitter API Configuration
 # ============================================================================
-TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY', 'new1_080d8c24606a4c4f9e3ccc2023c9f50a')
+TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY') or os.environ.get('TW_BEARER') or ''
 
 app = FastAPI()
 

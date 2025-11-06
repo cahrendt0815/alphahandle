@@ -3,7 +3,8 @@
  * Handles pre-fetching and caching of analysis results
  */
 
-const ANALYSIS_SERVER_URL = process.env.ANALYSIS_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+import { ANALYSIS_BASE_URL } from '../lib/appEnv';
+const ANALYSIS_SERVER_URL = ANALYSIS_BASE_URL;
 
 // In-memory cache for pre-fetched analysis
 const analysisCache = new Map();

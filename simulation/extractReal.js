@@ -11,7 +11,7 @@ const { shouldFetchTweets, updateCache, getLastTweetDate } = require('./tweetCac
 const { smartFilterTweets } = require('./smartFetch');
 
 // Configuration
-const TWITTER_API_KEY = process.env.TWITTER_API_KEY || 'new1_080d8c24606a4c4f9e3ccc2023c9f50a';
+const TWITTER_API_KEY = process.env.TWITTER_API_KEY || process.env.TW_BEARER || '';
 const HANDLE = process.env.HANDLE || 'abc';
 const OUTPUT_DIR = path.join(__dirname, '../out');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'raw_tweets.json');

@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json());
 
 // Get Twitter API key from environment
-const TWITTER_API_KEY = process.env.TWITTER_API_KEY || 'new1_080d8c24606a4c4f9e3ccc2023c9f50a';
+const TWITTER_API_KEY = process.env.TWITTER_API_KEY || process.env.TW_BEARER || '';
 
 /**
  * GET /api/profile/:handle
