@@ -51,16 +51,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', port: PORT });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📋 Available routes:`);
-  console.log(`   POST http://localhost:${PORT}/api/checkout/create`);
-  console.log(`   POST http://localhost:${PORT}/api/stripe/webhook`);
-  console.log(`   POST http://localhost:${PORT}/api/billing/portal`);
-  console.log(`   GET  http://localhost:${PORT}/api/billing/invoices`);
-  console.log(`   POST http://localhost:${PORT}/api/search/process`);
-  console.log(`   GET  http://localhost:${PORT}/health`);
-});
+// Start server locally only
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`📋 Available routes:`);
+    console.log(`   POST http://localhost:${PORT}/api/checkout/create`);
+    console.log(`   POST http://localhost:${PORT}/api/stripe/webhook`);
+    console.log(`   POST http://localhost:${PORT}/api/billing/portal`);
+    console.log(`   GET  http://localhost:${PORT}/api/billing/invoices`);
+    console.log(`   POST http://localhost:${PORT}/api/search/process`);
+    console.log(`   GET  http://localhost:${PORT}/health`);
+  });
+}
 
 module.exports = app;

@@ -1156,20 +1156,23 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Start server after loading companies
-(async () => {
-  await loadCompanies();
-  
-  app.listen(ANALYSIS_PORT, () => {
-    console.log(`\n✅ Analysis Server running on http://localhost:${ANALYSIS_PORT}`);
-    console.log(`📋 Endpoint: GET /api/analyze?handle=@username&months=12`);
-    console.log(`🔑 Twitter API: ${TWITTER_API_KEY ? 'Configured ✅' : 'Missing ❌'}`);
-    console.log(`📊 Companies loaded: ${COMPANIES.length}\n`);
-  });
-})();
+// Start server locally only (avoid starting in serverless env like Vercel)
+if (!process.env.VERCEL) {
+  (async () => {
+    await loadCompanies();
+    app.listen(ANALYSIS_PORT, () => {
+      console.log(`\n✅ Analysis Server running on http://localhost:${ANALYSIS_PORT}`);
+      console.log(`📋 Endpoint: GET /api/analyze?handle=@username&months=12`);
+      console.log(`🔑 Twitter API: ${TWITTER_API_KEY ? 'Configured ✅' : 'Missing ❌'}`);
+      console.log(`📊 Companies loaded: ${COMPANIES.length}\n`);
+    });
+  })();
+}
 
 // Export selected functions for reuse (e.g., twitterServer.js)
 module.exports = {
+  app,
+  loadCompanies,
   fetchTweetsWithLimit,
   fetchTweetsArchive
 };

@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "functions": {
+    "api/analysis.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/market.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 30,
+      "memory": 512
+    }
+  },
+  "routes": [
+    { "src": "/api/analysis(?:/.*)?", "dest": "/api/analysis.js" },
+    { "src": "/api/market(?:/.*)?", "dest": "/api/market.js" }
+  ]
+}
+
