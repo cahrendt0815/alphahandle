@@ -11,7 +11,10 @@ export type PriceResp = {
   asof: string | null;   // YYYY-MM-DD (source EOD date)
 };
 
-let MARKET_BASE_URL = process.env.MARKET_BASE_URL ?? 'http://localhost:8000';
+let MARKET_BASE_URL =
+  (process.env.NEXT_PUBLIC_MARKET_BASE_URL as string | undefined) ??
+  (process.env.EXPO_PUBLIC_MARKET_BASE_URL as string | undefined) ??
+  'http://localhost:8000';
 
 export const setMarketBaseUrl = (url: string) => {
   MARKET_BASE_URL = url;
