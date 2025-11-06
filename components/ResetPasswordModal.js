@@ -19,7 +19,7 @@ import { PrimaryButton, TextLink } from './StripeButton';
 
 const APP_URL = Platform.OS === 'web'
   ? window.location.origin
-  : 'http://localhost:8083';
+  : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:8083');
 
 export default function ResetPasswordModal({ visible, onClose }) {
   const [email, setEmail] = useState('');

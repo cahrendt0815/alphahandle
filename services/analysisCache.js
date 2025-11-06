@@ -3,7 +3,7 @@
  * Handles pre-fetching and caching of analysis results
  */
 
-const ANALYSIS_SERVER_URL = 'http://localhost:8002';
+const ANALYSIS_SERVER_URL = process.env.ANALYSIS_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 // In-memory cache for pre-fetched analysis
 const analysisCache = new Map();

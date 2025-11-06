@@ -16,7 +16,9 @@ import { PrimaryButton, SecondaryButton } from '../components/StripeButton';
 import GoogleLogo from '../components/GoogleLogo';
 import { storeHandleForAuth, getAndClearStoredHandle } from '../utils/authRedirectHandle';
 
-const APP_URL = 'http://localhost:8083';
+const APP_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin
+  : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:8083');
 
 export default function SignInScreen({ route }) {
   const { user, signInWithGoogle, signInWithEmailPassword } = useAuth();
