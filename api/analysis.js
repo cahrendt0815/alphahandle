@@ -1,12 +1,16 @@
-const serverless = require('serverless-http');
 const { app, loadCompanies } = require('../simulation/analysisServer');
+const serverless = require('serverless-http');
 
 let initialized = false;
+
+// Create serverless handler once
+const handler = serverless(app);
 
 module.exports = async (req, res) => {
 	console.log('[api/analysis] ========== FUNCTION CALLED ==========');
 	console.log('[api/analysis] Method:', req.method);
 	console.log('[api/analysis] Original URL:', req.url);
+	console.log('[api/analysis] Original path:', req.path);
 	console.log('[api/analysis] Query:', JSON.stringify(req.query));
 	
 	try {
@@ -23,40 +27,29 @@ module.exports = async (req, res) => {
 		}
 		
 		// Transform path: /api/analysis/api/analyze -> /api/analyze
-		// Vercel passes the full path, we need to strip /api/analysis prefix
-		const originalUrl = req.url || '';
-		let transformedUrl = originalUrl;
+		const originalUrl = req.url || req.path || '';
+		let newUrl = originalUrl;
 		
-		if (originalUrl.includes('/api/analysis/api/')) {
-			transformedUrl = originalUrl.replace('/api/analysis', '');
-			console.log('[api/analysis] Path transformed:', originalUrl, '->', transformedUrl);
-		} else if (originalUrl.startsWith('/api/analysis/')) {
-			transformedUrl = originalUrl.replace('/api/analysis', '');
-			console.log('[api/analysis] Path transformed:', originalUrl, '->', transformedUrl);
+		// Strip /api/analysis prefix if present
+		if (originalUrl.includes('/api/analysis/')) {
+			newUrl = originalUrl.replace(/^\/api\/analysis/, '');
+			if (!newUrl.startsWith('/')) {
+				newUrl = '/' + newUrl;
+			}
+			console.log('[api/analysis] Path transformed:', originalUrl, '->', newUrl);
 		}
 		
-		// Modify req object for serverless-http
-		// serverless-http reads from req.url, so we need to modify it
-		const originalReqUrl = req.url;
-		req.url = transformedUrl;
-		req.path = transformedUrl.split('?')[0];
-		req.originalUrl = originalReqUrl;
+		// Create a new request object with transformed URL
+		// serverless-http needs the URL to match Express routes
+		const modifiedReq = Object.create(req);
+		modifiedReq.url = newUrl;
+		modifiedReq.path = newUrl.split('?')[0];
+		modifiedReq.originalUrl = originalUrl;
 		
-		console.log('[api/analysis] Modified req.url:', req.url);
-		console.log('[api/analysis] Modified req.path:', req.path);
-		console.log('[api/analysis] About to call serverless(app)...');
+		console.log('[api/analysis] Calling serverless handler with URL:', modifiedReq.url);
 		
-		// Use serverless-http to handle the Express app
-		const handler = serverless(app, {
-			request: (request, event, context) => {
-				// Ensure the path is correct
-				request.url = transformedUrl;
-				request.path = transformedUrl.split('?')[0];
-			}
-		});
-		
-		console.log('[api/analysis] Calling handler...');
-		return handler(req, res);
+		// Call the serverless handler
+		return handler(modifiedReq, res);
 		
 	} catch (error) {
 		console.error('[api/analysis] ❌ Error:', error);
