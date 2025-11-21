@@ -197,7 +197,12 @@ export default function PortalScreen({ navigation, route }) {
 
       // Call server-side analysis endpoint with progressive loading
       const ANALYSIS_BASE_URL = getAnalysisBaseUrl(); // Get at runtime for accurate Vercel detection
-      console.log(`[Portal] Calling analysis server at ${ANALYSIS_BASE_URL}/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
+      // On Vercel: ANALYSIS_BASE_URL is '/api/analysis', we call '/api/analysis/api/analyze'
+      // The serverless wrapper strips '/api/analysis' prefix, so Express receives '/api/analyze'
+      const analyzePath = ANALYSIS_BASE_URL === '/api/analysis' 
+        ? '/api/analysis/api/analyze'  // Vercel: will be stripped to /api/analyze by wrapper
+        : `${ANALYSIS_BASE_URL}/api/analyze`; // Local: http://localhost:8002/api/analyze
+      console.log(`[Portal] Calling analysis server at ${analyzePath}?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
       
       // Dynamic timeout based on months requested: 60s for 12 months, +30s per additional 12 months
       const timeoutMs = Math.min(180000, 60000 + Math.ceil(timelineMonths / 12) * 30000); // Max 3 minutes
@@ -205,7 +210,7 @@ export default function PortalScreen({ navigation, route }) {
       
       let analysisResponse;
       try {
-        analysisResponse = await fetch(`${ANALYSIS_BASE_URL}/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`, {
+        analysisResponse = await fetch(`${analyzePath}?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`, {
           signal: AbortSignal.timeout(timeoutMs)
         });
       } catch (fetchError) {
@@ -301,7 +306,11 @@ export default function PortalScreen({ navigation, route }) {
         console.log(`[Portal] Polling for more results (attempt ${attempts}/${maxAttempts})...`);
 
         const analysisBaseUrl = getAnalysisBaseUrl(); // Get at runtime
-        const response = await fetch(`${analysisBaseUrl}/api/analyze/results/${sid}`);
+        // On Vercel, use full path /api/analysis/api/analyze/results/:sid (will be stripped by wrapper)
+        const resultsPath = analysisBaseUrl === '/api/analysis'
+          ? `/api/analysis/api/analyze/results/${sid}`  // Vercel: will be stripped to /api/analyze/results/:sid
+          : `${analysisBaseUrl}/api/analyze/results/${sid}`; // Local: http://localhost:8002/api/analyze/results/:sid
+        const response = await fetch(resultsPath);
 
         if (!response.ok) {
           console.error(`[Portal] Polling error: ${response.status}`);
