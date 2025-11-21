@@ -105,15 +105,24 @@ async function loadCompanies() {
  * Returns: { sessionId, handle, months, totalTweets, stockTweets, trades, stats, hasMore }
  */
 app.get('/api/analyze', async (req, res) => {
+  console.log(`[AnalysisServer] ========== /api/analyze ROUTE HIT ==========`);
+  console.log(`[AnalysisServer] Request URL: ${req.url}`);
+  console.log(`[AnalysisServer] Request method: ${req.method}`);
+  console.log(`[AnalysisServer] Request query:`, JSON.stringify(req.query));
+  console.log(`[AnalysisServer] Request headers:`, JSON.stringify(req.headers));
+  
   try {
     const { handle, months = 12 } = req.query;
+    console.log(`[AnalysisServer] Parsed handle: ${handle}, months: ${months}`);
 
     if (!handle) {
+      console.error(`[AnalysisServer] ❌ Missing handle parameter`);
       return res.status(400).json({ error: 'Missing handle parameter' });
     }
 
     const cleanHandle = handle.replace('@', '');
     const cacheKey = `${cleanHandle}_${months}`;
+    console.log(`[AnalysisServer] Clean handle: ${cleanHandle}, cacheKey: ${cacheKey}`);
 
     // Check analysis cache first
     const cachedAnalysis = analysisCache.get(cacheKey);

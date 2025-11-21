@@ -26,6 +26,9 @@ module.exports = async (req, res) => {
 		// Strip /api/analysis prefix from path for Express routes
 		// Vercel routes /api/analysis/* to this function, but Express expects /api/analyze
 		const originalUrl = req.url;
+		console.log('[api/analysis] Original URL:', originalUrl);
+		console.log('[api/analysis] Original path:', req.path);
+		
 		if (req.url && req.url.startsWith('/api/analysis')) {
 			req.url = req.url.replace('/api/analysis', '');
 			// Ensure path starts with /
@@ -33,6 +36,17 @@ module.exports = async (req, res) => {
 				req.url = '/' + req.url;
 			}
 			console.log('[api/analysis] Path transformed:', originalUrl, '->', req.url);
+		} else {
+			console.log('[api/analysis] ⚠️ URL does not start with /api/analysis, not transforming');
+		}
+		
+		// Also update req.path for Express routing
+		if (req.path && req.path.startsWith('/api/analysis')) {
+			req.path = req.path.replace('/api/analysis', '');
+			if (!req.path.startsWith('/')) {
+				req.path = '/' + req.path;
+			}
+			console.log('[api/analysis] Path also updated:', req.path);
 		}
 		
 		// Check for initialization error
