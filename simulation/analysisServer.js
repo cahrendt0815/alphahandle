@@ -43,7 +43,10 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
 if (!TWITTER_API_KEY) {
   console.error('[AnalysisServer] ❌ TWITTER_API_KEY not found');
-  process.exit(1);
+  // Don't exit in serverless environment - let requests fail gracefully
+  if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    process.exit(1);
+  }
 }
 
 // Check if DeepSeek API key is available
