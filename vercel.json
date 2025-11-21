@@ -7,7 +7,6 @@
       "memory": 2048
     },
     "api/market.py": {
-      "runtime": "python3.9",
       "maxDuration": 30
     }
   },
