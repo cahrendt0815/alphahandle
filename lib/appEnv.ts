@@ -23,10 +23,10 @@ function isVercelDeployment(): boolean {
 }
 
 // Get base URLs - use runtime check for accurate detection
-function getMarketBaseUrl(): string {
+function _getMarketBaseUrl(): string {
   const isVercel = isVercelDeployment();
   
-  // On Vercel, always use relative paths (ignore localhost env vars)
+  // On Vercel, always use relative paths (ignore localhost env vars and placeholders)
   if (isVercel) {
     console.log('[appEnv] On Vercel - using relative path /api/market');
     return '/api/market';
@@ -35,14 +35,19 @@ function getMarketBaseUrl(): string {
   // Local development: check environment variables
   if (process.env.NEXT_PUBLIC_MARKET_BASE_URL) {
     const url = process.env.NEXT_PUBLIC_MARKET_BASE_URL;
+    // Ignore placeholder values
+    if (url.includes('YOUR-') || url.includes('placeholder')) {
+      console.log('[appEnv] Ignoring placeholder NEXT_PUBLIC_MARKET_BASE_URL, using default');
+      return "http://localhost:8000";
+    }
     console.log('[appEnv] Using NEXT_PUBLIC_MARKET_BASE_URL:', url);
     return url;
   }
   if (process.env.EXPO_PUBLIC_MARKET_BASE_URL) {
     const url = process.env.EXPO_PUBLIC_MARKET_BASE_URL;
-    // Ignore localhost URLs if somehow set (shouldn't happen, but safety check)
-    if (url.includes('localhost')) {
-      console.log('[appEnv] Ignoring localhost EXPO_PUBLIC_MARKET_BASE_URL, using default');
+    // Ignore localhost URLs and placeholder values
+    if (url.includes('localhost') || url.includes('YOUR-') || url.includes('placeholder')) {
+      console.log('[appEnv] Ignoring invalid EXPO_PUBLIC_MARKET_BASE_URL, using default');
       return "http://localhost:8000";
     }
     console.log('[appEnv] Using EXPO_PUBLIC_MARKET_BASE_URL:', url);
@@ -53,10 +58,10 @@ function getMarketBaseUrl(): string {
   return "http://localhost:8000";
 }
 
-function getAnalysisBaseUrl(): string {
+function _getAnalysisBaseUrl(): string {
   const isVercel = isVercelDeployment();
   
-  // On Vercel, always use relative paths (ignore localhost env vars)
+  // On Vercel, always use relative paths (ignore localhost env vars and placeholders)
   if (isVercel) {
     console.log('[appEnv] On Vercel - using relative path /api/analysis');
     return '/api/analysis';
@@ -65,14 +70,19 @@ function getAnalysisBaseUrl(): string {
   // Local development: check environment variables
   if (process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL) {
     const url = process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL;
+    // Ignore placeholder values
+    if (url.includes('YOUR-') || url.includes('placeholder')) {
+      console.log('[appEnv] Ignoring placeholder NEXT_PUBLIC_ANALYSIS_BASE_URL, using default');
+      return "http://localhost:8002";
+    }
     console.log('[appEnv] Using NEXT_PUBLIC_ANALYSIS_BASE_URL:', url);
     return url;
   }
   if (process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL) {
     const url = process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL;
-    // Ignore localhost URLs if somehow set (shouldn't happen, but safety check)
-    if (url.includes('localhost')) {
-      console.log('[appEnv] Ignoring localhost EXPO_PUBLIC_ANALYSIS_BASE_URL, using default');
+    // Ignore localhost URLs and placeholder values
+    if (url.includes('localhost') || url.includes('YOUR-') || url.includes('placeholder')) {
+      console.log('[appEnv] Ignoring invalid EXPO_PUBLIC_ANALYSIS_BASE_URL, using default');
       return "http://localhost:8002";
     }
     console.log('[appEnv] Using EXPO_PUBLIC_ANALYSIS_BASE_URL:', url);
@@ -83,7 +93,7 @@ function getAnalysisBaseUrl(): string {
   return "http://localhost:8002";
 }
 
-// Calculate at module load (will be re-evaluated on each page load in browser)
-// For static exports, this runs in the browser, so window.location is available
-export const MARKET_BASE_URL = getMarketBaseUrl();
-export const ANALYSIS_BASE_URL = getAnalysisBaseUrl();
+// Export as constants - evaluated at module load
+// For static exports, this runs in the browser where window.location is available
+export const MARKET_BASE_URL = _getMarketBaseUrl();
+export const ANALYSIS_BASE_URL = _getAnalysisBaseUrl();
