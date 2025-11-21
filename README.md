@@ -2,7 +2,7 @@
 
 This branch is used for testing deployments before production.
 
-Last updated: 2025-11-05 – trigger for Vercel staging deployment.
+Last updated: 2025-01-21 – trigger for Vercel staging deployment.
 
 ---
 
