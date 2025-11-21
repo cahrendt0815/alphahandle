@@ -6,8 +6,12 @@ let initializationError = null;
 
 module.exports = async (req, res) => {
 	try {
-		console.log('[api/analysis] Request received:', req.method, req.url);
-		console.log('[api/analysis] Headers:', JSON.stringify(req.headers));
+		console.log('[api/analysis] ========== FUNCTION CALLED ==========');
+		console.log('[api/analysis] Request method:', req.method);
+		console.log('[api/analysis] Request URL:', req.url);
+		console.log('[api/analysis] Request path:', req.path);
+		console.log('[api/analysis] Request query:', JSON.stringify(req.query));
+		console.log('[api/analysis] Request headers:', JSON.stringify(req.headers));
 		
 		// Initialize companies data (only once)
 		if (!initialized) {
@@ -23,36 +27,33 @@ module.exports = async (req, res) => {
 			}
 		}
 		
-		// Strip /api/analysis prefix from path for Express routes
-		// Vercel routes /api/analysis/* to this function, but Express expects /api/analyze
-		const originalUrl = req.url;
-		console.log('[api/analysis] Original URL:', originalUrl);
-		console.log('[api/analysis] Original path:', req.path);
+		// Handle path transformation for serverless-http
+		// Vercel routes /api/analysis/api/analyze to this function
+		// We need to transform it to /api/analyze for Express
+		const originalUrl = req.url || req.path || '';
+		console.log('[api/analysis] Original URL/path:', originalUrl);
 		
-		if (req.url && req.url.startsWith('/api/analysis')) {
-			req.url = req.url.replace('/api/analysis', '');
-			// Ensure path starts with /
-			if (!req.url.startsWith('/')) {
-				req.url = '/' + req.url;
-			}
-			console.log('[api/analysis] Path transformed:', originalUrl, '->', req.url);
-		} else {
-			console.log('[api/analysis] ⚠️ URL does not start with /api/analysis, not transforming');
+		// Transform the path: /api/analysis/api/analyze -> /api/analyze
+		let transformedPath = originalUrl;
+		if (transformedPath.includes('/api/analysis/api/')) {
+			transformedPath = transformedPath.replace('/api/analysis', '');
+			console.log('[api/analysis] Path after /api/analysis removal:', transformedPath);
 		}
 		
-		// Also update req.path for Express routing
-		if (req.path && req.path.startsWith('/api/analysis')) {
-			req.path = req.path.replace('/api/analysis', '');
-			if (!req.path.startsWith('/')) {
-				req.path = '/' + req.path;
-			}
-			console.log('[api/analysis] Path also updated:', req.path);
-		}
+		// For serverless-http, we need to modify the request object properly
+		// Create a new request-like object with the transformed path
+		const transformedReq = {
+			...req,
+			url: transformedPath + (req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : ''),
+			path: transformedPath.split('?')[0],
+			originalUrl: req.url,
+			baseUrl: '',
+			pathname: transformedPath.split('?')[0]
+		};
 		
-		// Check for initialization error
-		if (initializationError) {
-			console.warn('[api/analysis] ⚠️ Initialization error present, but continuing...');
-		}
+		console.log('[api/analysis] Transformed URL:', transformedReq.url);
+		console.log('[api/analysis] Transformed path:', transformedReq.path);
+		console.log('[api/analysis] About to call serverless(app)...');
 		
 		// Check environment variables
 		if (!process.env.TWITTER_API_KEY && !process.env.TW_BEARER) {
@@ -61,9 +62,15 @@ module.exports = async (req, res) => {
 			console.log('[api/analysis] ✅ TWITTER_API_KEY is set');
 		}
 		
-		return serverless(app)(req, res);
+		// Call serverless-http with transformed request
+		const handler = serverless(app);
+		console.log('[api/analysis] Calling serverless handler...');
+		const result = await handler(transformedReq, res);
+		console.log('[api/analysis] Serverless handler returned');
+		return result;
 	} catch (error) {
 		console.error('[api/analysis] ❌ Unhandled error:', error);
+		console.error('[api/analysis] Error stack:', error.stack);
 		res.status(500).json({ 
 			error: 'Internal server error', 
 			message: error.message,

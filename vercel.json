@@ -10,7 +10,11 @@
       "excludeFiles": "{.next,*.cache,node_modules,dist,web-build,out,data,ios,android,.expo}/**"
     }
   },
+  "rewrites": [
+    { "source": "/api/analysis/api/:path*", "destination": "/api/analysis.js?path=:path*" }
+  ],
   "routes": [
+    { "src": "/api/analysis/api/(.*)", "dest": "/api/analysis.js?path=$1" },
     { "src": "/api/analysis(?:/.*)?", "dest": "/api/analysis.js" },
     { "src": "/api/market(?:/.*)?", "dest": "/api/market.py" }
   ]
