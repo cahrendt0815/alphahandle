@@ -4,7 +4,7 @@
     "api/analysis.js": {
       "runtime": "@vercel/node@2",
       "maxDuration": 300,
-      "memory": 3008
+      "memory": 2048
     },
     "api/market.py": {
       "runtime": "python3.9",
