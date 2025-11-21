@@ -93,7 +93,26 @@ function _getAnalysisBaseUrl(): string {
   return "http://localhost:8002";
 }
 
-// Export as constants - evaluated at module load
-// For static exports, this runs in the browser where window.location is available
-export const MARKET_BASE_URL = _getMarketBaseUrl();
-export const ANALYSIS_BASE_URL = _getAnalysisBaseUrl();
+// Export as getter functions that are evaluated at runtime when accessed
+// This ensures window.location is available and env vars are checked fresh
+let _marketUrlCache: string | null = null;
+let _analysisUrlCache: string | null = null;
+
+export function getMarketBaseUrl(): string {
+  if (_marketUrlCache === null) {
+    _marketUrlCache = _getMarketBaseUrl();
+  }
+  return _marketUrlCache;
+}
+
+export function getAnalysisBaseUrl(): string {
+  if (_analysisUrlCache === null) {
+    _analysisUrlCache = _getAnalysisBaseUrl();
+  }
+  return _analysisUrlCache;
+}
+
+// Export as constants for backward compatibility
+// These will be evaluated when first accessed via the getters
+export const MARKET_BASE_URL = getMarketBaseUrl();
+export const ANALYSIS_BASE_URL = getAnalysisBaseUrl();

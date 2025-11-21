@@ -34,7 +34,7 @@ import TargetIcon from '../components/TargetIcon';
 import StarIcon from '../components/StarIcon';
 import MiniChart from '../components/MiniChart';
 import { analyzeHandle, getCachedAnalysis} from '../services/fintwitService';
-import { ANALYSIS_BASE_URL } from '../lib/appEnv';
+import { getAnalysisBaseUrl } from '../lib/appEnv';
 import { addFavorite, listFavorites } from '../services/favorites';
 import { analyzeHandleIncremental } from '../services/incrementalAnalysis';
 import { fetchProfileImage } from '../services/profileCache';
@@ -196,6 +196,7 @@ export default function PortalScreen({ navigation, route }) {
       }
 
       // Call server-side analysis endpoint with progressive loading
+      const ANALYSIS_BASE_URL = getAnalysisBaseUrl(); // Get at runtime for accurate Vercel detection
       console.log(`[Portal] Calling analysis server at ${ANALYSIS_BASE_URL}/api/analyze?handle=${encodeURIComponent(handle)}&months=${timelineMonths}`);
       
       // Dynamic timeout based on months requested: 60s for 12 months, +30s per additional 12 months
@@ -299,7 +300,8 @@ export default function PortalScreen({ navigation, route }) {
         attempts++;
         console.log(`[Portal] Polling for more results (attempt ${attempts}/${maxAttempts})...`);
 
-        const response = await fetch(`${ANALYSIS_BASE_URL}/api/analyze/results/${sid}`);
+        const analysisBaseUrl = getAnalysisBaseUrl(); // Get at runtime
+        const response = await fetch(`${analysisBaseUrl}/api/analyze/results/${sid}`);
 
         if (!response.ok) {
           console.error(`[Portal] Polling error: ${response.status}`);
