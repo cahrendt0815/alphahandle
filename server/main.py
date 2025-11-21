@@ -22,15 +22,10 @@ TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY') or os.environ.get('TW_BEARER
 app = FastAPI()
 
 # CORS configuration
+# Allow all origins for Vercel deployments (CORS handled by Vercel)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8081",
-        "http://localhost:8082",
-        "http://localhost:8083",
-        "http://localhost:19006",
-        "https://*.onrender.com",
-    ],
+    allow_origins=["*"],  # Vercel handles CORS, so allow all
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

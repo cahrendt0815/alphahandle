@@ -1013,7 +1013,21 @@ async function fetchPricesAndBuildTrades(bullishTweets) {
   }
 
   const trades = [];
-  const marketServerUrl = 'http://localhost:8000';
+  // On Vercel, construct full URL to market API serverless function
+  // Otherwise use MARKET_UPSTREAM_URL or fallback to localhost
+  const isVercel = process.env.VERCEL === '1';
+  let marketServerUrl;
+  if (isVercel) {
+    // On Vercel, use the deployment URL to call the market API serverless function
+    const vercelUrl = process.env.VERCEL_URL || process.env.NEXT_PUBLIC_SITE_URL;
+    marketServerUrl = vercelUrl ? `${vercelUrl}/api/market` : '/api/market';
+  } else {
+    // Local development or external deployment
+    marketServerUrl = process.env.MARKET_UPSTREAM_URL || 
+                      process.env.NEXT_PUBLIC_MARKET_BASE_URL ||
+                      process.env.EXPO_PUBLIC_MARKET_BASE_URL ||
+                      'http://localhost:8000';
+  }
 
   for (const tweet of deduplicatedTweets) {
     try {

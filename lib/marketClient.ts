@@ -1,4 +1,6 @@
 // lib/marketClient.ts
+import { MARKET_BASE_URL as ENV_MARKET_BASE_URL } from './appEnv';
+
 export type PriceReq =
   | { symbol: string; type: 'entry'; tweetTimestamp: string }  // ISO timestamp
   | { symbol: string; type: 'latest' };
@@ -11,10 +13,8 @@ export type PriceResp = {
   asof: string | null;   // YYYY-MM-DD (source EOD date)
 };
 
-let MARKET_BASE_URL =
-  (process.env.NEXT_PUBLIC_MARKET_BASE_URL as string | undefined) ??
-  (process.env.EXPO_PUBLIC_MARKET_BASE_URL as string | undefined) ??
-  'http://localhost:8000';
+// Use centralized MARKET_BASE_URL from appEnv.ts
+let MARKET_BASE_URL = ENV_MARKET_BASE_URL;
 
 export const setMarketBaseUrl = (url: string) => {
   MARKET_BASE_URL = url;

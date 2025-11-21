@@ -109,9 +109,63 @@ This project can be deployed to Vercel as a static site.
 **Build Details:**
 - The build command runs `expo export --platform web` which generates static HTML/CSS/JS files in the `dist` directory
 - The exported site is fully static and doesn't require a Node.js runtime
-- Make sure to set all required environment variables in Vercel's environment settings
+- Backend services run as Vercel Serverless Functions at `/api/analysis` and `/api/market`
 
-**Note:** The Python FastAPI backend (`server/main.py`) and other Node.js servers (analysis server, etc.) are deployed separately (e.g., on Render) and accessed via environment variables like `MARKET_BASE_URL` and `ANALYSIS_BASE_URL`.
+### Vercel Environment Variables
+
+**Required Environment Variables** (set in Vercel → Settings → Environment Variables):
+
+1. **Twitter API (Required for analysis server):**
+   ```
+   TWITTER_API_KEY=your_twitterapi_io_key
+   ```
+
+2. **Supabase (Required for auth and caching):**
+   ```
+   EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+   ```
+
+3. **Market API (Optional - only if FastAPI is deployed separately):**
+   ```
+   MARKET_UPSTREAM_URL=https://your-fastapi-service-url.com
+   ```
+   ⚠️ **Note:** By default, the FastAPI service runs as a Vercel serverless function at `/api/market`. Only set `MARKET_UPSTREAM_URL` if you're hosting FastAPI separately.
+   
+   **EODHD API Token (Required for market data):**
+   ```
+   EODHD_API_TOKEN=your_eodhd_token
+   ```
+
+4. **EODHD API Token (Required for market data):**
+   ```
+   EODHD_API_TOKEN=your_eodhd_token
+   ```
+
+5. **Company Tickers (Required for analysis):**
+   ```
+   EXPO_PUBLIC_COMPANY_TICKERS_URL=https://your-supabase-storage-url/company_tickers.json
+   ```
+
+6. **Optional - DeepSeek API (for LLM sentiment analysis):**
+   ```
+   DEEPSEEK_API_KEY=your_deepseek_key
+   ```
+   If not set, the analysis server will use keyword-based sentiment analysis.
+
+7. **Optional - Site URL (for auth redirects):**
+   ```
+   NEXT_PUBLIC_SITE_URL=https://staging.alphahandle.com
+   ```
+   Set this to your Vercel deployment URL for proper auth redirects.
+
+**How it works:**
+- The frontend automatically uses `/api/analysis` and `/api/market` (relative paths) when deployed on Vercel
+- `/api/analysis` runs the Node.js analysis server as a serverless function
+- `/api/market` runs the FastAPI service as a Python serverless function (no separate deployment needed)
+- All environment variables are available to both the build process and the serverless functions
+- Both services run entirely on Vercel - no external hosting required
 
 ## Market Data API
 

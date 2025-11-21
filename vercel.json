@@ -2,19 +2,18 @@
   "version": 2,
   "functions": {
     "api/analysis.js": {
-      "runtime": "nodejs20.x",
-      "maxDuration": 60,
-      "memory": 1024
+      "runtime": "@vercel/node@2",
+      "maxDuration": 300,
+      "memory": 3008
     },
-    "api/market.js": {
-      "runtime": "nodejs20.x",
-      "maxDuration": 30,
-      "memory": 512
+    "api/market.py": {
+      "runtime": "python3.9",
+      "maxDuration": 30
     }
   },
   "routes": [
     { "src": "/api/analysis(?:/.*)?", "dest": "/api/analysis.js" },
-    { "src": "/api/market(?:/.*)?", "dest": "/api/market.js" }
+    { "src": "/api/market(?:/.*)?", "dest": "/api/market.py" }
   ]
 }
 
