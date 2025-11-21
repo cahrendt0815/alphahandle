@@ -5,9 +5,6 @@
       "runtime": "@vercel/node@2",
       "maxDuration": 300,
       "memory": 2048
-    },
-    "api/market.py": {
-      "maxDuration": 30
     }
   },
   "routes": [
