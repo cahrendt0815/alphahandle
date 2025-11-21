@@ -320,6 +320,9 @@ async function processRemainingTweets(sessionId, remainingStockTweets) {
  * Fetch tweets for a handle from Twitter API using max_id for deep historical access
  */
 async function fetchTweetsForHandle(handle, months, maxTweets) {
+  console.log(`[AnalysisServer] ========== fetchTweetsForHandle START ==========`);
+  console.log(`[AnalysisServer] handle: ${handle}, months: ${months}, maxTweets: ${maxTweets}`);
+  
   const sinceDate = new Date();
   sinceDate.setMonth(sinceDate.getMonth() - months);
   const since = sinceDate.toISOString().split('T')[0];
@@ -327,9 +330,18 @@ async function fetchTweetsForHandle(handle, months, maxTweets) {
   const query = `from:${handle} -is:retweet since:${since}`;
   console.log(`[AnalysisServer] Twitter query: "${query}"`);
   console.log(`[AnalysisServer] Fetching up to ${maxTweets} tweets from ${since} to today using max_id pagination`);
+  console.log(`[AnalysisServer] About to call fetchTweetsWithLimit...`);
 
   // First attempt: broad query with pagination/max_id
-  let tweets = await fetchTweetsWithLimit(query, TWITTER_API_KEY, 'Latest', maxTweets);
+  let tweets;
+  try {
+    console.log(`[AnalysisServer] Calling fetchTweetsWithLimit with TWITTER_API_KEY: ${TWITTER_API_KEY ? 'SET' : 'NOT SET'}`);
+    tweets = await fetchTweetsWithLimit(query, TWITTER_API_KEY, 'Latest', maxTweets);
+    console.log(`[AnalysisServer] ✅ fetchTweetsWithLimit completed, got ${tweets ? tweets.length : 0} tweets`);
+  } catch (error) {
+    console.error(`[AnalysisServer] ❌ fetchTweetsWithLimit failed:`, error);
+    throw error;
+  }
 
   // If we hit a recent-window ceiling (common ~30-40 days), walk back in date windows with since/until
   if (tweets.length < maxTweets) {
@@ -400,20 +412,28 @@ async function fetchTweetsForHandle(handle, months, maxTweets) {
  * Fetch tweets with pagination limit using cursor and max_id for deep historical access
  */
 async function fetchTweetsWithLimit(query, apiKey, queryType, maxTweets) {
+  console.log(`[fetchTweetsWithLimit] ========== START ==========`);
+  console.log(`[fetchTweetsWithLimit] query: ${query}, maxTweets: ${maxTweets}`);
+  
   // Environment validation
   const keyToUse = apiKey || process.env.TWITTER_API_KEY || process.env.TW_BEARER;
   if (!keyToUse) {
+    console.error(`[fetchTweetsWithLimit] ❌ Missing TWITTER_API_KEY`);
     throw new Error('Missing TWITTER_API_KEY — please set in .env');
   }
+  console.log(`[fetchTweetsWithLimit] ✅ API key is set`);
 
   const baseUrl = 'https://api.twitterapi.io/twitter/tweet/advanced_search';
   const headers = { 'x-api-key': keyToUse };
+  console.log(`[fetchTweetsWithLimit] Base URL: ${baseUrl}`);
 
   // Bottleneck rate limiter: 1 request every 500ms, maxConcurrent 1
   if (!global.__twitterLimiter) {
+    console.log(`[fetchTweetsWithLimit] Creating rate limiter...`);
     global.__twitterLimiter = new Bottleneck({ minTime: 500, maxConcurrent: 1 });
   }
   const limiter = global.__twitterLimiter;
+  console.log(`[fetchTweetsWithLimit] Rate limiter ready`);
 
   // Simple in-memory cache (60s)
   if (!global.__twitterCache) {
@@ -485,22 +505,31 @@ async function fetchTweetsWithLimit(query, apiKey, queryType, maxTweets) {
     throw new Error(`Failed to fetch tweets after ${maxRetries} attempts: ${(lastErr && lastErr.message) || 'unknown error'}`);
   };
 
+  let iterationCount = 0;
   while (allTweets.length < maxTweets) {
+    iterationCount++;
+    console.log(`[fetchTweetsWithLimit] Iteration ${iterationCount}: Current tweets: ${allTweets.length}/${maxTweets}`);
+    
     const params = { queryType: queryType };
     if (cursor) {
       params.cursor = cursor;
       params.query = query;
+      console.log(`[fetchTweetsWithLimit] Using cursor: ${cursor.substring(0, 20)}...`);
     } else if (lastMinId) {
       params.query = `${query} max_id:${lastMinId}`;
+      console.log(`[fetchTweetsWithLimit] Using max_id: ${lastMinId}`);
     } else {
       params.query = query;
+      console.log(`[fetchTweetsWithLimit] First request, query: ${query}`);
     }
 
     let hasNextPage = false;
     let tweets = [];
     let newTweets = [];
 
+    console.log(`[fetchTweetsWithLimit] About to call doRequest with params:`, JSON.stringify(params));
     const resp = await doRequest(params);
+    console.log(`[fetchTweetsWithLimit] doRequest completed, status: ${resp.status}`);
     const data = resp && resp.data ? resp.data : resp;
 
     tweets = (data && data.tweets) || [];
