@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/analysis.js": {
-      "runtime": "@vercel/node@2",
+      "runtime": "nodejs18.x",
       "maxDuration": 300,
       "memory": 2048
     }
