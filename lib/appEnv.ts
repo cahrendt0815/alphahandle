@@ -3,19 +3,69 @@
 // On Vercel (production/staging), use relative paths to serverless functions
 // Locally, use localhost URLs
 
-const isVercel = typeof window !== 'undefined' && 
-  (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+// Runtime check for Vercel deployment (not localhost)
+function isVercelDeployment(): boolean {
+  if (typeof window === 'undefined') {
+    console.log('[appEnv] window is undefined, assuming server-side');
+    return false;
+  }
+  const hostname = window.location.hostname;
+  const isLocal = hostname === 'localhost' || 
+                  hostname === '127.0.0.1' || 
+                  hostname === '[::1]' ||
+                  hostname.startsWith('192.168.') ||
+                  hostname.startsWith('10.') ||
+                  hostname.endsWith('.local');
+  
+  const isVercel = !isLocal;
+  console.log(`[appEnv] hostname: ${hostname}, isLocal: ${isLocal}, isVercel: ${isVercel}`);
+  return isVercel;
+}
 
-// For Vercel deployments, always use relative paths to serverless functions
-// For local dev, use localhost URLs
-export const MARKET_BASE_URL = isVercel
-  ? '/api/market'
-  : (process.env.NEXT_PUBLIC_MARKET_BASE_URL ||
-     process.env.EXPO_PUBLIC_MARKET_BASE_URL ||
-     "http://localhost:8000");
+// Get base URLs - use runtime check for accurate detection
+function getMarketBaseUrl(): string {
+  // Check environment variables first (for explicit configuration)
+  if (process.env.NEXT_PUBLIC_MARKET_BASE_URL) {
+    console.log('[appEnv] Using NEXT_PUBLIC_MARKET_BASE_URL:', process.env.NEXT_PUBLIC_MARKET_BASE_URL);
+    return process.env.NEXT_PUBLIC_MARKET_BASE_URL;
+  }
+  if (process.env.EXPO_PUBLIC_MARKET_BASE_URL) {
+    console.log('[appEnv] Using EXPO_PUBLIC_MARKET_BASE_URL:', process.env.EXPO_PUBLIC_MARKET_BASE_URL);
+    return process.env.EXPO_PUBLIC_MARKET_BASE_URL;
+  }
+  
+  // Runtime check: use relative path on Vercel, localhost locally
+  if (isVercelDeployment()) {
+    console.log('[appEnv] Using relative path /api/market (Vercel)');
+    return '/api/market';
+  }
+  
+  console.log('[appEnv] Using localhost:8000 (local dev)');
+  return "http://localhost:8000";
+}
 
-export const ANALYSIS_BASE_URL = isVercel
-  ? '/api/analysis'
-  : (process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL ||
-     process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL ||
-     "http://localhost:8002");
+function getAnalysisBaseUrl(): string {
+  // Check environment variables first (for explicit configuration)
+  if (process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL) {
+    console.log('[appEnv] Using NEXT_PUBLIC_ANALYSIS_BASE_URL:', process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL);
+    return process.env.NEXT_PUBLIC_ANALYSIS_BASE_URL;
+  }
+  if (process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL) {
+    console.log('[appEnv] Using EXPO_PUBLIC_ANALYSIS_BASE_URL:', process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL);
+    return process.env.EXPO_PUBLIC_ANALYSIS_BASE_URL;
+  }
+  
+  // Runtime check: use relative path on Vercel, localhost locally
+  if (isVercelDeployment()) {
+    console.log('[appEnv] Using relative path /api/analysis (Vercel)');
+    return '/api/analysis';
+  }
+  
+  console.log('[appEnv] Using localhost:8002 (local dev)');
+  return "http://localhost:8002";
+}
+
+// Calculate at module load (will be re-evaluated on each page load in browser)
+// For static exports, this runs in the browser, so window.location is available
+export const MARKET_BASE_URL = getMarketBaseUrl();
+export const ANALYSIS_BASE_URL = getAnalysisBaseUrl();
