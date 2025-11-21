@@ -3,7 +3,11 @@
   "functions": {
     "api/analysis.js": {
       "maxDuration": 300,
-      "memory": 2048
+      "memory": 2048,
+      "excludeFiles": "{.next,*.cache,node_modules/.cache,dist,web-build,out,data,ios,android,.expo}/**"
+    },
+    "api/market.py": {
+      "excludeFiles": "{.next,*.cache,node_modules,dist,web-build,out,data,ios,android,.expo}/**"
     }
   },
   "routes": [
