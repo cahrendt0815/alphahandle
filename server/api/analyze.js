@@ -28,8 +28,8 @@ module.exports = async (req, res) => {
 
     // Validate months
     const monthsNum = parseInt(months, 10);
-    if (isNaN(monthsNum) || monthsNum < 1 || monthsNum > 24) {
-      return res.status(400).json({ error: 'Months must be between 1 and 24' });
+    if (isNaN(monthsNum) || monthsNum < 1 || monthsNum > 36) {
+      return res.status(400).json({ error: 'Months must be between 1 and 36' });
     }
 
     // Get analyst API URL from environment
