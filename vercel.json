@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/api/analyze",
+      "destination": "/api/analyze.js"
+    },
+    {
+      "source": "/api/checkout/create",
+      "destination": "/api/checkout/create.js"
+    },
+    {
+      "source": "/api/stripe/webhook",
+      "destination": "/api/stripe/webhook.js"
+    },
+    {
+      "source": "/api/billing/portal",
+      "destination": "/api/billing/portal.js"
+    },
+    {
+      "source": "/api/billing/invoices",
+      "destination": "/api/billing/invoices.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/dist/$1"
+    }
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "nodejs20.x",
+      "includeFiles": "server/lib/**"
+    },
+    "api/stripe/webhook.js": {
+      "runtime": "nodejs20.x",
+      "includeFiles": "server/lib/**",
+      "memory": 1024
+    }
+  }
+}
