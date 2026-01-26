@@ -88,6 +88,26 @@ module.exports = async (req, res) => {
       const data = await response.json();
       
       console.log(`[Analyze] Successfully received response from analyst API`);
+      console.log(`[Analyze] Response type: ${Array.isArray(data) ? 'array' : typeof data}`);
+      console.log(`[Analyze] Response keys: ${typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).join(', ') : 'N/A'}`);
+      
+      // Validate response structure
+      if (Array.isArray(data)) {
+        console.error('[Analyze] Analyst API returned array instead of object. Expected { trades, stats }');
+        return res.status(502).json({ 
+          error: 'Invalid response format from analyst API',
+          message: 'Analyst API returned an array instead of expected object format'
+        });
+      }
+      
+      if (!data || typeof data !== 'object') {
+        console.error('[Analyze] Analyst API returned invalid data type:', typeof data);
+        return res.status(502).json({ 
+          error: 'Invalid response format from analyst API',
+          message: 'Analyst API returned invalid data type'
+        });
+      }
+      
       return res.status(200).json(data);
 
     } catch (fetchError) {

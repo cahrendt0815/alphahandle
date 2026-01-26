@@ -183,12 +183,33 @@ export default function PortalScreen({ navigation, route }) {
       }
       
       const analysisData = await response.json();
-      console.log(`[Portal] ✅ Dummy analysis complete:`, analysisData);
+      console.log(`[Portal] ✅ Analysis response received:`, analysisData);
+      console.log(`[Portal DEBUG] analysisData type:`, Array.isArray(analysisData) ? 'array' : typeof analysisData);
       console.log(`[Portal DEBUG] analysisData.trades:`, analysisData.trades);
       console.log(`[Portal DEBUG] analysisData.trades.length:`, analysisData.trades?.length);
       console.log(`[Portal DEBUG] analysisData.stats:`, analysisData.stats);
 
       if (!mounted) return;
+
+      // Validate response structure
+      if (Array.isArray(analysisData)) {
+        console.error('[Portal] API returned array instead of object');
+        throw new Error('Invalid response format: API returned an array instead of expected object');
+      }
+
+      if (!analysisData || typeof analysisData !== 'object') {
+        console.error('[Portal] API returned invalid data type:', typeof analysisData);
+        throw new Error('Invalid response format: API returned invalid data type');
+      }
+
+      if (!analysisData.stats || !analysisData.trades) {
+        console.error('[Portal] API response missing required fields:', {
+          hasStats: !!analysisData.stats,
+          hasTrades: !!analysisData.trades,
+          keys: Object.keys(analysisData)
+        });
+        throw new Error('Invalid response format: Missing trades or stats in response');
+      }
 
       // Store session ID (for consistency, though not used with dummy data)
       if (analysisData.sessionId) {
@@ -197,14 +218,14 @@ export default function PortalScreen({ navigation, route }) {
 
       // Update UI with results
       setData({
-        avgReturn: analysisData.stats.avgReturn,
-        alpha: analysisData.stats.alpha,
-        winRate: analysisData.stats.winRate,
-        hitRatio: analysisData.stats.hitRatio,
-        totalTrades: analysisData.stats.totalTrades
+        avgReturn: analysisData.stats.avgReturn || 0,
+        alpha: analysisData.stats.alpha || 0,
+        winRate: analysisData.stats.winRate || 0,
+        hitRatio: analysisData.stats.hitRatio || 0,
+        totalTrades: analysisData.stats.totalTrades || 0
       });
 
-      setAllTrades(analysisData.trades);
+      setAllTrades(analysisData.trades || []);
       setHasMoreResults(false); // Dummy data is always complete
       setAnalysisLoading(false);
       setAnalysisCompleted(true);
