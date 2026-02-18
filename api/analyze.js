@@ -6,25 +6,47 @@
  */
 
 module.exports = async (req, res) => {
+  console.log('[Analyze] invoked');
   const send500 = (msg) => {
-    if (!res.headersSent) res.status(500).json({ error: 'Internal server error', message: msg || 'Unknown error' });
+    try {
+      if (res && !res.headersSent) res.status(500).json({ error: 'Internal server error', message: msg || 'Unknown error' });
+    } catch (e) {
+      console.error('[Analyze] send500 failed:', e);
+    }
   };
 
+  if (!req || !res) {
+    console.error('[Analyze] req or res missing');
+    send500('Invalid request');
+    return;
+  }
+
+  try {
   if (typeof fetch !== 'function') {
     console.error('[Analyze] fetch is not available (Node < 18?)');
-    return send500('Server configuration error');
+    send500('Server configuration error');
+    return;
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
   }
 
-  let body = req.body;
+  let body;
+  try {
+    body = req.body;
+  } catch (bodyErr) {
+    console.error('[Analyze] request.body threw:', bodyErr && bodyErr.message);
+    res.status(400).json({ error: 'Invalid JSON body', message: bodyErr && bodyErr.message ? String(bodyErr.message) : 'Bad request body' });
+    return;
+  }
   if (typeof body === 'string') {
     try {
       body = body ? JSON.parse(body) : {};
     } catch (e) {
-      return res.status(400).json({ error: 'Invalid JSON body' });
+      res.status(400).json({ error: 'Invalid JSON body' });
+      return;
     }
   }
   if (!body || typeof body !== 'object') body = {};
@@ -68,7 +90,7 @@ module.exports = async (req, res) => {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    let timeoutId = setTimeout(() => controller.abort(), 60000);
 
     const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
     if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
@@ -225,5 +247,6 @@ module.exports = async (req, res) => {
     console.error('[Analyze] Unexpected error:', error);
     const message = error && typeof error.message === 'string' ? error.message : 'Internal server error';
     send500(message);
+    return;
   }
 };

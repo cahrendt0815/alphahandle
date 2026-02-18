@@ -4,6 +4,78 @@ Your analyst’s API endpoint and expected request/response format are described
 
 ---
 
+## Quick: How to test the API with your app
+
+1. **Analyst API only (no app)**  
+   - `curl "https://s4pfj1jmmd.execute-api.eu-central-1.amazonaws.com/query?month=6"`  
+   - Confirms the analyst returns a JSON array.
+
+   **→ Step-by-step for non-technical users:** see [Option A – Simple steps](#option-a--test-the-analyst-api-only-simple-steps) below.
+
+2. **Your backend locally (recommended)**  
+   - In project root: `.env` with `EXPO_PUBLIC_STOCK_ANALYSIS_API_URL=https://s4pfj1jmmd.execute-api.eu-central-1.amazonaws.com/query`  
+   - Run: `npm run server`  
+   - Then either:
+     - **From the app:** Point the app at `http://localhost:3000` (or use your dev build’s API base) and run a handle search, or  
+     - **From terminal:**  
+       `curl -X POST http://localhost:3000/api/analyze -H "Content-Type: application/json" -d '{"handle":"@rubicon59","months":36}'`  
+   - You should get JSON with `trades` and `stats`. Any error will show in the terminal.
+
+3. **Live app (production)**  
+   - Ensure Vercel has env: `EXPO_PUBLIC_STOCK_ANALYSIS_API_URL` = that same analyst URL.  
+   - Deploy, then in the app: sign in → enter handle (e.g. `rubicon59`) → run analysis.  
+   - If you get **500**: open **Vercel → Project → Logs** (or **Deployments → latest → Functions → api/analyze → Logs**) and look for `[Analyze]` lines or the exception. The app will show the backend `message` in the error state when the backend returns JSON with `error`/`message`.
+
+---
+
+## Option A – Test the analyst API only (simple steps)
+
+This checks that the **data source** your app uses is working—without opening the app. You’re just asking that service: “Give me data for the last 6 months.” If you get a list of items back, the source is fine.
+
+**What you need:** A Mac or Windows PC. No coding.
+
+### On a Mac
+
+1. **Open the Terminal**
+   - Press **Cmd + Space** to open Spotlight (the search bar).
+   - Type **Terminal** and press **Enter**.
+   - A window with a black or white background and text will open.
+
+2. **Run the test command**
+   - Click in that window so your typing goes there.
+   - Copy this **entire** line (including the quotes):
+     ```
+     curl "https://s4pfj1jmmd.execute-api.eu-central-1.amazonaws.com/query?month=6"
+     ```
+   - Paste it into the Terminal (Cmd + V).
+   - Press **Enter**.
+
+3. **What you should see**
+   - **If it works:** A long block of text appears (often starting with `[` and containing things like `"id"`, `"url"`, `"created_at"`). That’s the data list. No need to understand it—seeing that block means the analyst API is responding.
+   - **If something’s wrong:** You might see an error message (e.g. “Could not resolve host” or “Connection refused”). In that case the data source isn’t reachable from your network.
+
+### On Windows (PowerShell)
+
+1. **Open PowerShell**
+   - Press the **Windows key**, type **PowerShell**, click **Windows PowerShell**.
+
+2. **Run the test command**
+   - Copy this **entire** line (including the quotes):
+     ```
+     curl "https://s4pfj1jmmd.execute-api.eu-central-1.amazonaws.com/query?month=6"
+     ```
+   - Paste into PowerShell (right-click or Ctrl + V), then press **Enter**.
+
+3. **What you should see**
+   - Same as on Mac: a long block of text (data list) = working; an error message = problem reaching the data source.
+
+### What this tells you
+
+- **You saw the long data block** → The analyst API is up and returning data. If your app still fails, the issue is likely in your app or in how your app talks to this API.
+- **You saw an error** → The data source isn’t reachable (e.g. network, firewall, or the service is down). Fix that first before debugging the app.
+
+---
+
 ## 1. Analyst API details
 
 - **Endpoint:** `https://s4pfj1jmmd.execute-api.eu-central-1.amazonaws.com/query`
