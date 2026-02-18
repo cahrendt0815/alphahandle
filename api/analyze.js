@@ -1,18 +1,35 @@
 /**
  * POST /api/analyze
  * Vercel serverless function - thin proxy to external analyst API
- * 
- * Validates input, forwards to analyst API, returns response
+ * Validates input, forwards to analyst API, returns response.
+ * Requires Node 18+ (native fetch). See package.json "engines".
  */
 
 module.exports = async (req, res) => {
-  // Only allow POST requests
+  const send500 = (msg) => {
+    if (!res.headersSent) res.status(500).json({ error: 'Internal server error', message: msg || 'Unknown error' });
+  };
+
+  if (typeof fetch !== 'function') {
+    console.error('[Analyze] fetch is not available (Node < 18?)');
+    return send500('Server configuration error');
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = body ? JSON.parse(body) : {};
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid JSON body' });
+    }
+  }
+  if (!body || typeof body !== 'object') body = {};
+
   try {
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
     const { handle, months = 12 } = body;
 
     // Validate input
@@ -207,8 +224,6 @@ module.exports = async (req, res) => {
   } catch (error) {
     console.error('[Analyze] Unexpected error:', error);
     const message = error && typeof error.message === 'string' ? error.message : 'Internal server error';
-    if (!res.headersSent) {
-      return res.status(500).json({ error: 'Internal server error', message });
-    }
+    send500(message);
   }
 };
