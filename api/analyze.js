@@ -101,37 +101,33 @@ module.exports = async (req, res) => {
     let response;
     let responseText;
 
-    // Try 1: GET with query param (most widely supported)
-    let urlWithQuery;
-    try {
-      urlWithQuery = new URL(baseUrl);
-    } catch (urlErr) {
-      console.error('[Analyze] Invalid analyst API URL:', urlErr.message);
-      return res.status(500).json({ error: 'Invalid analyst API URL' });
-    }
-    urlWithQuery.searchParams.set('month', monthsNum.toString());
-    urlWithQuery.searchParams.set('account', cleanHandle);
-    console.log(`[Analyze] Request 1 (query): ${urlWithQuery.toString()}`);
+    // Match analyst API: GET with JSON body (month, account) as in their Postman example
+    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
+    console.log('[Analyze] Request: GET with body', bodyPayload);
 
-    response = await fetch(urlWithQuery.toString(), {
+    response = await fetch(baseUrl, {
       method: 'GET',
-      headers,
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: bodyPayload,
       signal: controller.signal,
     });
     responseText = await response.text().catch(() => '');
 
-    // Try 2: if upstream error and body suggests bad request, retry with GET + JSON body (per analyst Postman example)
+    // Fallback: if 4xx, retry with query params only (some gateways strip GET body)
     if (!response.ok && response.status >= 400 && response.status < 500) {
-      console.log('[Analyze] Retrying with GET + JSON body (month only)');
-      const bodyRetry = JSON.stringify({ month: monthsNum, account: cleanHandle });
-      const res2 = await fetch(baseUrl, {
-        method: 'GET',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: bodyRetry,
-        signal: controller.signal,
-      });
-      responseText = await res2.text().catch(() => '');
-      response = res2;
+      console.log('[Analyze] Retrying with query params');
+      try {
+        const urlWithQuery = new URL(baseUrl);
+        urlWithQuery.searchParams.set('month', monthsNum.toString());
+        urlWithQuery.searchParams.set('account', cleanHandle);
+        const res2 = await fetch(urlWithQuery.toString(), {
+          method: 'GET',
+          headers,
+          signal: controller.signal,
+        });
+        responseText = await res2.text().catch(() => '');
+        response = res2;
+      } catch (_) {}
     }
 
     clearTimeout(timeoutId);
@@ -156,7 +152,7 @@ module.exports = async (req, res) => {
       }
       
       console.log(`[Analyze] Successfully received response from analyst API`);
-      console.log(`[Analyze] Response type: ${Array.isArray(raw) ? 'array' : typeof raw}`);
+      console.log(`[Analyze] Response type: ${Array.isArray(raw) ? 'array' : typeof raw}, length: ${Array.isArray(raw) ? raw.length : 'n/a'}`);
       console.log(
         `[Analyze] Response keys: ${
           raw && typeof raw === 'object' && !Array.isArray(raw)

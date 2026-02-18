@@ -40,33 +40,28 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // Build analyst API URL – analyst API uses "month" (singular); only that param is valid for now
-    const url = new URL(analystApiUrl);
-    url.searchParams.set('month', monthsNum.toString());
-    url.searchParams.set('account', cleanHandle);
+    // Analyst API expects GET with JSON body (month, account) per Postman example
+    const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
+    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
+    console.log(`[Analyze] Forwarding request to analyst API: GET ${baseUrl} body=${bodyPayload}`);
 
-    console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
-
-    // Prepare headers
     const headers = {
       'Content-Type': 'application/json',
     };
-
-    // Add authentication if available
     if (process.env.STOCK_ANALYSIS_API_TOKEN) {
       headers['Authorization'] = `Bearer ${process.env.STOCK_ANALYSIS_API_TOKEN}`;
     } else if (process.env.STOCK_ANALYSIS_API_KEY) {
       headers['X-API-Key'] = process.env.STOCK_ANALYSIS_API_KEY;
     }
 
-    // Forward request to analyst API with timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await fetch(baseUrl, {
         method: 'GET',
         headers,
+        body: bodyPayload,
         signal: controller.signal,
       });
 
