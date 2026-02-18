@@ -4,11 +4,6 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": null,
-  "functions": {
-    "api/analyze.js": {
-      "runtime": "nodejs18.x"
-    }
-  },
   "rewrites": [
     {"source": "/api/analyze", "destination": "/api/analyze.js"},
     {"source": "/api/checkout/create", "destination": "/api/checkout/create.js"},
