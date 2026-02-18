@@ -12,7 +12,8 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { handle, months = 12 } = req.body;
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { handle, months = 12 } = body;
 
     // Validate input
     if (!handle || typeof handle !== 'string' || handle.trim().length === 0) {
@@ -52,12 +53,23 @@ module.exports = async (req, res) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-    const baseUrl = analystApiUrl.replace(/\?.*$/, '');
+    const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
+    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+      console.error('[Analyze] Invalid analyst API URL (missing protocol):', baseUrl.substring(0, 50));
+      return res.status(500).json({ error: 'Analyst API URL must use http or https' });
+    }
+
     let response;
     let responseText;
 
     // Try 1: GET with query param (most widely supported)
-    const urlWithQuery = new URL(baseUrl);
+    let urlWithQuery;
+    try {
+      urlWithQuery = new URL(baseUrl);
+    } catch (urlErr) {
+      console.error('[Analyze] Invalid analyst API URL:', urlErr.message);
+      return res.status(500).json({ error: 'Invalid analyst API URL' });
+    }
     urlWithQuery.searchParams.set('month', monthsNum.toString());
     console.log(`[Analyze] Request 1 (query): ${urlWithQuery.toString()}`);
 
@@ -120,22 +132,25 @@ module.exports = async (req, res) => {
         console.log('[Analyze] Mapping analyst array response to app trade format');
 
         const mappedTrades = raw.map((item) => {
+          if (!item || typeof item !== 'object') {
+            return { ticker: '—', company: '—', dateMentioned: '', beginningValue: 0, lastValue: 0, stockReturn: 0, alphaVsSPY: 0, hitOrMiss: 'Miss', tweetUrl: '', tweetText: '' };
+          }
           const ticker = Array.isArray(item.cashtag) && item.cashtag[0]
-            ? (item.cashtag[0].startsWith('$') ? item.cashtag[0] : `$${item.cashtag[0]}`)
+            ? (String(item.cashtag[0]).startsWith('$') ? String(item.cashtag[0]) : `$${item.cashtag[0]}`)
             : '—';
           const stockReturn = typeof item.return === 'number' && !Number.isNaN(item.return) ? item.return : 0;
           const alphaVsSPY = typeof item.alpha === 'number' && !Number.isNaN(item.alpha) ? item.alpha : 0;
           return {
             ticker,
             company: '—',
-            dateMentioned: item.created_at || '',
+            dateMentioned: item.created_at != null ? String(item.created_at) : '',
             beginningValue: typeof item.begin === 'number' ? item.begin : 0,
             lastValue: typeof item.last === 'number' ? item.last : 0,
             stockReturn,
             alphaVsSPY,
             hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
-            tweetUrl: item.url || '',
-            tweetText: item.text || '',
+            tweetUrl: item.url != null ? String(item.url) : '',
+            tweetText: item.text != null ? String(item.text) : '',
           };
         });
 
@@ -191,9 +206,9 @@ module.exports = async (req, res) => {
 
   } catch (error) {
     console.error('[Analyze] Unexpected error:', error);
-    return res.status(500).json({
-      error: 'Internal server error',
-      message: error.message,
-    });
+    const message = error && typeof error.message === 'string' ? error.message : 'Internal server error';
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Internal server error', message });
+    }
   }
 };
