@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
     // Build analyst API URL – analyst API uses "month" (singular); only that param is valid for now
     const url = new URL(analystApiUrl);
     url.searchParams.set('month', monthsNum.toString());
-    // When analyst supports account/handle: url.searchParams.set('account', cleanHandle);
+    url.searchParams.set('account', cleanHandle);
 
     console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
 

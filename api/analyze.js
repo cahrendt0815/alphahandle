@@ -110,6 +110,7 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Invalid analyst API URL' });
     }
     urlWithQuery.searchParams.set('month', monthsNum.toString());
+    urlWithQuery.searchParams.set('account', cleanHandle);
     console.log(`[Analyze] Request 1 (query): ${urlWithQuery.toString()}`);
 
     response = await fetch(urlWithQuery.toString(), {
@@ -122,7 +123,7 @@ module.exports = async (req, res) => {
     // Try 2: if upstream error and body suggests bad request, retry with GET + JSON body (per analyst Postman example)
     if (!response.ok && response.status >= 400 && response.status < 500) {
       console.log('[Analyze] Retrying with GET + JSON body (month only)');
-      const bodyRetry = JSON.stringify({ month: monthsNum });
+      const bodyRetry = JSON.stringify({ month: monthsNum, account: cleanHandle });
       const res2 = await fetch(baseUrl, {
         method: 'GET',
         headers: { ...headers, 'Content-Type': 'application/json' },

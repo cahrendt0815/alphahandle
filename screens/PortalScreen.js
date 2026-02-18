@@ -165,7 +165,7 @@ export default function PortalScreen({ navigation, route }) {
     try {
       // Get user's entitlement to determine timeline months
       const entitlement = user ? await getEntitlementForUser(user) : null;
-      const timelineMonths = 36; // Fetch 3 years of tweets (maximum realistic timeframe)
+      const timelineMonths = 6; // Match analyst API example; increase (e.g. 12, 36) for longer lookback when supported
 
       console.log(`[Portal] Analyzing with ${timelineMonths} months timeline (plan: ${entitlement?.plan || 'free'})`);
 
