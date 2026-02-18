@@ -51,6 +51,7 @@ module.exports = async (req, res) => {
   }
   if (!body || typeof body !== 'object') body = {};
 
+  let timeoutId;
   try {
     const { handle, months = 12 } = body;
 
@@ -90,7 +91,7 @@ module.exports = async (req, res) => {
     }
 
     const controller = new AbortController();
-    let timeoutId = setTimeout(() => controller.abort(), 60000);
+    timeoutId = setTimeout(() => controller.abort(), 60000);
 
     const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
     if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
@@ -130,7 +131,7 @@ module.exports = async (req, res) => {
       } catch (_) {}
     }
 
-    clearTimeout(timeoutId);
+    if (timeoutId != null) clearTimeout(timeoutId);
 
     if (!response.ok) {
         console.error(`[Analyze] Analyst API error ${response.status}: ${responseText.substring(0, 300)}`);
@@ -225,7 +226,7 @@ module.exports = async (req, res) => {
       return res.status(200).json(data);
 
     } catch (fetchError) {
-      clearTimeout(timeoutId);
+      if (timeoutId != null) clearTimeout(timeoutId);
 
       if (fetchError.name === 'AbortError') {
         console.error('[Analyze] Request timeout');
