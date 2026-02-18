@@ -40,74 +40,137 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // Build analyst API URL
-    const url = new URL(analystApiUrl);
-    url.searchParams.set('handle', cleanHandle);
-    url.searchParams.set('months', monthsNum.toString());
-
-    console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
-
-    // Prepare headers
     const headers = {
       'Content-Type': 'application/json',
     };
-
-    // Add authentication if available
     if (process.env.STOCK_ANALYSIS_API_TOKEN) {
       headers['Authorization'] = `Bearer ${process.env.STOCK_ANALYSIS_API_TOKEN}`;
     } else if (process.env.STOCK_ANALYSIS_API_KEY) {
       headers['X-API-Key'] = process.env.STOCK_ANALYSIS_API_KEY;
     }
 
-    // Forward request to analyst API with timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-    try {
-      const response = await fetch(url.toString(), {
+    const baseUrl = analystApiUrl.replace(/\?.*$/, '');
+    let response;
+    let responseText;
+
+    // Try 1: GET with query param (most widely supported)
+    const urlWithQuery = new URL(baseUrl);
+    urlWithQuery.searchParams.set('month', monthsNum.toString());
+    console.log(`[Analyze] Request 1 (query): ${urlWithQuery.toString()}`);
+
+    response = await fetch(urlWithQuery.toString(), {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    responseText = await response.text().catch(() => '');
+
+    // Try 2: if upstream error and body suggests bad request, retry with GET + JSON body (per analyst Postman example)
+    if (!response.ok && response.status >= 400 && response.status < 500) {
+      console.log('[Analyze] Retrying with GET + JSON body (month only)');
+      const bodyRetry = JSON.stringify({ month: monthsNum });
+      const res2 = await fetch(baseUrl, {
         method: 'GET',
-        headers,
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: bodyRetry,
         signal: controller.signal,
       });
+      responseText = await res2.text().catch(() => '');
+      response = res2;
+    }
 
-      clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
 
-      // Handle errors from analyst API
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[Analyze] Analyst API error ${response.status}: ${errorText.substring(0, 200)}`);
-        
-        // Forward status code and error
-        return res.status(response.status).json({
-          error: `Analyst API error: ${response.status}`,
-          message: errorText.substring(0, 500),
+    if (!response.ok) {
+        console.error(`[Analyze] Analyst API error ${response.status}: ${responseText.substring(0, 300)}`);
+        return res.status(502).json({
+          error: 'Analyst API error',
+          message: `Upstream returned ${response.status}: ${responseText.substring(0, 200)}`,
         });
       }
 
-      // Parse and return response
-      const data = await response.json();
+      let raw;
+      try {
+        raw = responseText ? JSON.parse(responseText) : null;
+      } catch (parseErr) {
+        console.error('[Analyze] Analyst API returned non-JSON:', responseText.substring(0, 200));
+        return res.status(502).json({
+          error: 'Invalid response from analyst API',
+          message: 'Response was not valid JSON',
+        });
+      }
       
       console.log(`[Analyze] Successfully received response from analyst API`);
-      console.log(`[Analyze] Response type: ${Array.isArray(data) ? 'array' : typeof data}`);
-      console.log(`[Analyze] Response keys: ${typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).join(', ') : 'N/A'}`);
-      
-      // Validate response structure
-      if (Array.isArray(data)) {
-        console.error('[Analyze] Analyst API returned array instead of object. Expected { trades, stats }');
-        return res.status(502).json({ 
+      console.log(`[Analyze] Response type: ${Array.isArray(raw) ? 'array' : typeof raw}`);
+      console.log(
+        `[Analyze] Response keys: ${
+          raw && typeof raw === 'object' && !Array.isArray(raw)
+            ? Object.keys(raw).join(', ')
+            : 'N/A'
+        }`
+      );
+
+      let data = raw;
+
+      // If service returns an array (analyst API format), map to our app trade shape and add stats
+      if (Array.isArray(raw)) {
+        console.log('[Analyze] Mapping analyst array response to app trade format');
+
+        const mappedTrades = raw.map((item) => {
+          const ticker = Array.isArray(item.cashtag) && item.cashtag[0]
+            ? (item.cashtag[0].startsWith('$') ? item.cashtag[0] : `$${item.cashtag[0]}`)
+            : '—';
+          const stockReturn = typeof item.return === 'number' && !Number.isNaN(item.return) ? item.return : 0;
+          const alphaVsSPY = typeof item.alpha === 'number' && !Number.isNaN(item.alpha) ? item.alpha : 0;
+          return {
+            ticker,
+            company: '—',
+            dateMentioned: item.created_at || '',
+            beginningValue: typeof item.begin === 'number' ? item.begin : 0,
+            lastValue: typeof item.last === 'number' ? item.last : 0,
+            stockReturn,
+            alphaVsSPY,
+            hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
+            tweetUrl: item.url || '',
+            tweetText: item.text || '',
+          };
+        });
+
+        const totalTrades = mappedTrades.length;
+        const returns = mappedTrades
+          .map(t => t.stockReturn)
+          .filter(v => typeof v === 'number' && !Number.isNaN(v));
+        const avgReturn = returns.length > 0
+          ? parseFloat((returns.reduce((a, b) => a + b, 0) / returns.length).toFixed(2))
+          : 0;
+        const alpha = returns.length > 0
+          ? parseFloat((returns.reduce((a, b) => a + b, 0) / returns.length - 0).toFixed(2))
+          : 0;
+        const winners = mappedTrades.filter(t => t.stockReturn > 0).length;
+        const winRate = totalTrades > 0 ? parseFloat(((winners / totalTrades) * 100).toFixed(1)) : 0;
+        const hitRatio = totalTrades > 0 ? parseFloat((mappedTrades.filter(t => t.alphaVsSPY > 0).length / totalTrades * 100).toFixed(1)) : 0;
+
+        data = {
+          trades: mappedTrades,
+          stats: {
+            avgReturn,
+            alpha,
+            winRate,
+            hitRatio,
+            totalTrades,
+          },
+        };
+      } else if (!raw || typeof raw !== 'object') {
+        console.error('[Analyze] Analyst API returned invalid data type:', typeof raw);
+        return res.status(502).json({
           error: 'Invalid response format from analyst API',
-          message: 'Analyst API returned an array instead of expected object format'
+          message: 'Analyst API returned invalid data type',
         });
       }
-      
-      if (!data || typeof data !== 'object') {
-        console.error('[Analyze] Analyst API returned invalid data type:', typeof data);
-        return res.status(502).json({ 
-          error: 'Invalid response format from analyst API',
-          message: 'Analyst API returned invalid data type'
-        });
-      }
-      
+
       return res.status(200).json(data);
 
     } catch (fetchError) {

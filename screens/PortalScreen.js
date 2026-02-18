@@ -178,11 +178,23 @@ export default function PortalScreen({ navigation, route }) {
         body: JSON.stringify({ handle, months: timelineMonths }),
       });
       
+      const responseText = await response.text();
+      let analysisData;
+      try {
+        analysisData = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        analysisData = null;
+      }
+
       if (!response.ok) {
-        throw new Error(`Analysis failed: ${response.status} ${response.statusText}`);
+        const msg = (analysisData && (analysisData.message || analysisData.error)) || response.statusText || `HTTP ${response.status}`;
+        console.error('[Portal] Analysis failed:', response.status, analysisData || responseText);
+        throw new Error(msg);
       }
       
-      const analysisData = await response.json();
+      if (!analysisData) {
+        throw new Error('Empty response from server');
+      }
       console.log(`[Portal] ✅ Analysis response received:`, analysisData);
       console.log(`[Portal DEBUG] analysisData type:`, Array.isArray(analysisData) ? 'array' : typeof analysisData);
       console.log(`[Portal DEBUG] analysisData.trades:`, analysisData.trades);
@@ -253,9 +265,7 @@ export default function PortalScreen({ navigation, route }) {
         setAnalysisLoading(false);
         setIsRefreshing(false);
         setProcessingStatus('');
-        // Generic error message for users, detailed error in console for developers
-        const userMessage = 'Analysis temporarily unavailable. Please try again.';
-        console.error('[Portal] Analysis error details:', error);
+        const userMessage = error && error.message ? error.message : 'Analysis temporarily unavailable. Please try again.';
         setAnalysisError(userMessage);
       }
     }

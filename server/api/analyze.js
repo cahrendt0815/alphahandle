@@ -40,10 +40,10 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // Build analyst API URL
+    // Build analyst API URL – analyst API uses "month" (singular); only that param is valid for now
     const url = new URL(analystApiUrl);
-    url.searchParams.set('handle', cleanHandle);
-    url.searchParams.set('months', monthsNum.toString());
+    url.searchParams.set('month', monthsNum.toString());
+    // When analyst supports account/handle: url.searchParams.set('account', cleanHandle);
 
     console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
 
@@ -84,10 +84,77 @@ module.exports = async (req, res) => {
         });
       }
 
-      // Parse and return response
-      const data = await response.json();
+      // Parse and normalize response
+      const raw = await response.json();
       
       console.log(`[Analyze] Successfully received response from analyst API`);
+      console.log(`[Analyze] Response type: ${Array.isArray(raw) ? 'array' : typeof raw}`);
+      console.log(
+        `[Analyze] Response keys: ${
+          raw && typeof raw === 'object' && !Array.isArray(raw)
+            ? Object.keys(raw).join(', ')
+            : 'N/A'
+        }`
+      );
+
+      let data = raw;
+
+      // If service returns an array (analyst API format), map to our app trade shape and add stats
+      if (Array.isArray(raw)) {
+        console.log('[Analyze] Mapping analyst array response to app trade format');
+
+        const mappedTrades = raw.map((item) => {
+          const ticker = Array.isArray(item.cashtag) && item.cashtag[0]
+            ? (item.cashtag[0].startsWith('$') ? item.cashtag[0] : `$${item.cashtag[0]}`)
+            : '—';
+          const stockReturn = typeof item.return === 'number' && !Number.isNaN(item.return) ? item.return : 0;
+          const alphaVsSPY = typeof item.alpha === 'number' && !Number.isNaN(item.alpha) ? item.alpha : 0;
+          return {
+            ticker,
+            company: '—',
+            dateMentioned: item.created_at || '',
+            beginningValue: typeof item.begin === 'number' ? item.begin : 0,
+            lastValue: typeof item.last === 'number' ? item.last : 0,
+            stockReturn,
+            alphaVsSPY,
+            hitOrMiss: stockReturn > 0 ? 'Hit' : 'Miss',
+            tweetUrl: item.url || '',
+            tweetText: item.text || '',
+          };
+        });
+
+        const totalTrades = mappedTrades.length;
+        const returns = mappedTrades
+          .map(t => t.stockReturn)
+          .filter(v => typeof v === 'number' && !Number.isNaN(v));
+        const avgReturn = returns.length > 0
+          ? parseFloat((returns.reduce((a, b) => a + b, 0) / returns.length).toFixed(2))
+          : 0;
+        const alpha = returns.length > 0
+          ? parseFloat((returns.reduce((a, b) => a + b, 0) / returns.length - 0).toFixed(2))
+          : 0;
+        const winners = mappedTrades.filter(t => t.stockReturn > 0).length;
+        const winRate = totalTrades > 0 ? parseFloat(((winners / totalTrades) * 100).toFixed(1)) : 0;
+        const hitRatio = totalTrades > 0 ? parseFloat((mappedTrades.filter(t => t.alphaVsSPY > 0).length / totalTrades * 100).toFixed(1)) : 0;
+
+        data = {
+          trades: mappedTrades,
+          stats: {
+            avgReturn,
+            alpha,
+            winRate,
+            hitRatio,
+            totalTrades,
+          },
+        };
+      } else if (!raw || typeof raw !== 'object') {
+        console.error('[Analyze] Analyst API returned invalid data type:', typeof raw);
+        return res.status(502).json({
+          error: 'Invalid response format from analyst API',
+          message: 'Analyst API returned invalid data type',
+        });
+      }
+
       return res.status(200).json(data);
 
     } catch (fetchError) {
