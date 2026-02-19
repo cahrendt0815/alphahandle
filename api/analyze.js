@@ -102,19 +102,32 @@ module.exports = async (req, res) => {
     let response;
     let responseText;
 
-    // GET with query params (Node/Vercel fetch does not allow GET + body)
-    const urlWithQuery = new URL(baseUrl);
-    urlWithQuery.searchParams.set('month', monthsNum.toString());
-    urlWithQuery.searchParams.set('account', cleanHandle);
-    const requestUrl = urlWithQuery.toString();
-    console.log('[Analyze] Request: GET', requestUrl);
+    // Try POST with JSON body first (matches analyst Postman; they may only read body)
+    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
+    console.log('[Analyze] Request: POST with body', bodyPayload);
 
-    response = await fetch(requestUrl, {
-      method: 'GET',
-      headers,
+    response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: bodyPayload,
       signal: controller.signal,
     });
     responseText = await response.text().catch(() => '');
+
+    // Fallback: if POST not allowed, use GET with query params
+    if (response.status === 405 || response.status === 404) {
+      console.log('[Analyze] POST not supported, retrying GET with query params');
+      const urlWithQuery = new URL(baseUrl);
+      urlWithQuery.searchParams.set('month', monthsNum.toString());
+      urlWithQuery.searchParams.set('account', cleanHandle);
+      const res2 = await fetch(urlWithQuery.toString(), {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+      responseText = await res2.text().catch(() => '');
+      response = res2;
+    }
 
     if (timeoutId != null) clearTimeout(timeoutId);
 

@@ -40,12 +40,10 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // GET with query params (GET + body not allowed in Node fetch)
+    // POST with JSON body (matches analyst Postman; they may only read body)
     const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
-    const url = new URL(baseUrl);
-    url.searchParams.set('month', monthsNum.toString());
-    url.searchParams.set('account', cleanHandle);
-    console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
+    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
+    console.log(`[Analyze] Forwarding request to analyst API: POST ${baseUrl} body=${bodyPayload}`);
 
     const headers = { 'Content-Type': 'application/json' };
     if (process.env.STOCK_ANALYSIS_API_TOKEN) {
@@ -58,28 +56,39 @@ module.exports = async (req, res) => {
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      const response = await fetch(url.toString(), {
-        method: 'GET',
+      let response = await fetch(baseUrl, {
+        method: 'POST',
         headers,
+        body: bodyPayload,
         signal: controller.signal,
       });
+      let responseText = await response.text().catch(() => '');
+      if (response.status === 405 || response.status === 404) {
+        const url = new URL(baseUrl);
+        url.searchParams.set('month', monthsNum.toString());
+        url.searchParams.set('account', cleanHandle);
+        response = await fetch(url.toString(), { method: 'GET', headers, signal: controller.signal });
+        responseText = await response.text().catch(() => '');
+      }
 
       clearTimeout(timeoutId);
 
       // Handle errors from analyst API
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[Analyze] Analyst API error ${response.status}: ${errorText.substring(0, 200)}`);
-        
-        // Forward status code and error
+        console.error(`[Analyze] Analyst API error ${response.status}: ${responseText.substring(0, 200)}`);
         return res.status(response.status).json({
           error: `Analyst API error: ${response.status}`,
-          message: errorText.substring(0, 500),
+          message: responseText.substring(0, 500),
         });
       }
 
       // Parse and normalize response
-      const raw = await response.json();
+      let raw;
+      try {
+        raw = responseText ? JSON.parse(responseText) : null;
+      } catch (e) {
+        return res.status(502).json({ error: 'Invalid JSON from analyst API' });
+      }
       
       console.log(`[Analyze] Successfully received response from analyst API`);
       console.log(`[Analyze] Response type: ${Array.isArray(raw) ? 'array' : typeof raw}`);
