@@ -102,34 +102,19 @@ module.exports = async (req, res) => {
     let response;
     let responseText;
 
-    // Match analyst API: GET with JSON body (month, account) as in their Postman example
-    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
-    console.log('[Analyze] Request: GET with body', bodyPayload);
+    // GET with query params (Node/Vercel fetch does not allow GET + body)
+    const urlWithQuery = new URL(baseUrl);
+    urlWithQuery.searchParams.set('month', monthsNum.toString());
+    urlWithQuery.searchParams.set('account', cleanHandle);
+    const requestUrl = urlWithQuery.toString();
+    console.log('[Analyze] Request: GET', requestUrl);
 
-    response = await fetch(baseUrl, {
+    response = await fetch(requestUrl, {
       method: 'GET',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: bodyPayload,
+      headers,
       signal: controller.signal,
     });
     responseText = await response.text().catch(() => '');
-
-    // Fallback: if 4xx, retry with query params only (some gateways strip GET body)
-    if (!response.ok && response.status >= 400 && response.status < 500) {
-      console.log('[Analyze] Retrying with query params');
-      try {
-        const urlWithQuery = new URL(baseUrl);
-        urlWithQuery.searchParams.set('month', monthsNum.toString());
-        urlWithQuery.searchParams.set('account', cleanHandle);
-        const res2 = await fetch(urlWithQuery.toString(), {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        });
-        responseText = await res2.text().catch(() => '');
-        response = res2;
-      } catch (_) {}
-    }
 
     if (timeoutId != null) clearTimeout(timeoutId);
 

@@ -40,14 +40,14 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // Analyst API expects GET with JSON body (month, account) per Postman example
+    // GET with query params (GET + body not allowed in Node fetch)
     const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
-    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
-    console.log(`[Analyze] Forwarding request to analyst API: GET ${baseUrl} body=${bodyPayload}`);
+    const url = new URL(baseUrl);
+    url.searchParams.set('month', monthsNum.toString());
+    url.searchParams.set('account', cleanHandle);
+    console.log(`[Analyze] Forwarding request to analyst API: ${url.toString()}`);
 
-    const headers = {
-      'Content-Type': 'application/json',
-    };
+    const headers = { 'Content-Type': 'application/json' };
     if (process.env.STOCK_ANALYSIS_API_TOKEN) {
       headers['Authorization'] = `Bearer ${process.env.STOCK_ANALYSIS_API_TOKEN}`;
     } else if (process.env.STOCK_ANALYSIS_API_KEY) {
@@ -58,10 +58,9 @@ module.exports = async (req, res) => {
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      const response = await fetch(baseUrl, {
+      const response = await fetch(url.toString(), {
         method: 'GET',
         headers,
-        body: bodyPayload,
         signal: controller.signal,
       });
 
