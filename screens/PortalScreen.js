@@ -200,6 +200,9 @@ export default function PortalScreen({ navigation, route }) {
       console.log(`[Portal DEBUG] analysisData.trades:`, analysisData.trades);
       console.log(`[Portal DEBUG] analysisData.trades.length:`, analysisData.trades?.length);
       console.log(`[Portal DEBUG] analysisData.stats:`, analysisData.stats);
+      if (analysisData._debug) {
+        console.warn('[Portal] Analyst returned 0 items. Debug info:', analysisData._debug);
+      }
 
       if (!mounted) return;
 

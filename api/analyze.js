@@ -103,7 +103,12 @@ module.exports = async (req, res) => {
     let responseText;
 
     // Try POST with JSON body first (matches analyst Postman; they may only read body)
-    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
+    // Send both account and handle in case their API expects one or the other
+    const bodyPayload = JSON.stringify({
+      month: monthsNum,
+      account: cleanHandle,
+      handle: cleanHandle,
+    });
     console.log('[Analyze] Request: POST with body', bodyPayload);
 
     response = await fetch(baseUrl, {
@@ -114,12 +119,16 @@ module.exports = async (req, res) => {
     });
     responseText = await response.text().catch(() => '');
 
+    let usedMethod = 'POST';
+
     // Fallback: if POST not allowed, use GET with query params
     if (response.status === 405 || response.status === 404) {
       console.log('[Analyze] POST not supported, retrying GET with query params');
+      usedMethod = 'GET';
       const urlWithQuery = new URL(baseUrl);
       urlWithQuery.searchParams.set('month', monthsNum.toString());
       urlWithQuery.searchParams.set('account', cleanHandle);
+      urlWithQuery.searchParams.set('handle', cleanHandle);
       const res2 = await fetch(urlWithQuery.toString(), {
         method: 'GET',
         headers,
@@ -213,6 +222,13 @@ module.exports = async (req, res) => {
             totalTrades,
           },
         };
+        if (mappedTrades.length === 0) {
+          data._debug = {
+            message: 'Analyst API returned 0 items. Ask them to confirm request format.',
+            request: usedMethod === 'POST' ? { method: 'POST', body: { month: monthsNum, account: cleanHandle, handle: cleanHandle } } : { method: 'GET', params: { month: monthsNum, account: cleanHandle, handle: cleanHandle } },
+            responseLength: raw.length,
+          };
+        }
       } else if (!raw || typeof raw !== 'object') {
         console.error('[Analyze] Analyst API returned invalid data type:', typeof raw);
         return res.status(502).json({
