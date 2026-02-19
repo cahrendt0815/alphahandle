@@ -102,14 +102,10 @@ module.exports = async (req, res) => {
     let response;
     let responseText;
 
-    // Try POST with JSON body first (matches analyst Postman; they may only read body)
-    // Send both account and handle in case their API expects one or the other
-    const bodyPayload = JSON.stringify({
-      month: monthsNum,
-      account: cleanHandle,
-      handle: cleanHandle,
-    });
-    console.log('[Analyze] Request: POST with body', bodyPayload);
+    // Analyst: "only the month param is valid" for mock. They use GET+body in Postman; we can't send GET+body from Node.
+    // Strategy: try POST with body { month } first (same payload, many backends accept POST), then GET with ?month=.
+    const bodyPayload = JSON.stringify({ month: monthsNum });
+    console.log('[Analyze] Request 1: POST with body (month only)', bodyPayload);
 
     response = await fetch(baseUrl, {
       method: 'POST',
@@ -119,23 +115,17 @@ module.exports = async (req, res) => {
     });
     responseText = await response.text().catch(() => '');
 
-    let usedMethod = 'POST';
-
-    // Fallback: if POST not allowed, use GET with query params
     if (response.status === 405 || response.status === 404) {
-      console.log('[Analyze] POST not supported, retrying GET with query params');
-      usedMethod = 'GET';
+      console.log('[Analyze] POST not supported, trying GET with ?month=' + monthsNum);
       const urlWithQuery = new URL(baseUrl);
       urlWithQuery.searchParams.set('month', monthsNum.toString());
-      urlWithQuery.searchParams.set('account', cleanHandle);
-      urlWithQuery.searchParams.set('handle', cleanHandle);
-      const res2 = await fetch(urlWithQuery.toString(), {
+      const requestUrl = urlWithQuery.toString();
+      response = await fetch(requestUrl, {
         method: 'GET',
         headers,
         signal: controller.signal,
       });
-      responseText = await res2.text().catch(() => '');
-      response = res2;
+      responseText = await response.text().catch(() => '');
     }
 
     if (timeoutId != null) clearTimeout(timeoutId);
@@ -171,7 +161,8 @@ module.exports = async (req, res) => {
 
       let data = raw;
 
-      // If service returns an array (analyst API format), map to our app trade shape and add stats
+      // If service returns an array (analyst API format), map to our app trade shape and add stats.
+      // Analyst fields: id, url, created_at, cashtag, text, begin, return, last, alpha → app table columns.
       if (Array.isArray(raw)) {
         console.log('[Analyze] Mapping analyst array response to app trade format');
 
@@ -224,8 +215,8 @@ module.exports = async (req, res) => {
         };
         if (mappedTrades.length === 0) {
           data._debug = {
-            message: 'Analyst API returned 0 items. Ask them to confirm request format.',
-            request: usedMethod === 'POST' ? { method: 'POST', body: { month: monthsNum, account: cleanHandle, handle: cleanHandle } } : { method: 'GET', params: { month: monthsNum, account: cleanHandle, handle: cleanHandle } },
+            message: 'Analyst returned 0 items. We send only month (only valid param per analyst). Try POST body { month: 6 } or GET ?month=6 in Postman to confirm.',
+            request: { monthOnly: monthsNum, note: 'account/handle not sent yet (analyst said only month valid for mock)' },
             responseLength: raw.length,
           };
         }

@@ -40,10 +40,10 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: 'Analyst API not configured' });
     }
 
-    // POST with JSON body (matches analyst Postman; they may only read body)
+    // Analyst: only "month" valid for mock. Try POST with { month } then GET ?month=.
     const baseUrl = analystApiUrl.replace(/\?.*$/, '').trim();
-    const bodyPayload = JSON.stringify({ month: monthsNum, account: cleanHandle });
-    console.log(`[Analyze] Forwarding request to analyst API: POST ${baseUrl} body=${bodyPayload}`);
+    const bodyPayload = JSON.stringify({ month: monthsNum });
+    console.log(`[Analyze] Forwarding: POST body ${bodyPayload}`);
 
     const headers = { 'Content-Type': 'application/json' };
     if (process.env.STOCK_ANALYSIS_API_TOKEN) {
@@ -66,7 +66,6 @@ module.exports = async (req, res) => {
       if (response.status === 405 || response.status === 404) {
         const url = new URL(baseUrl);
         url.searchParams.set('month', monthsNum.toString());
-        url.searchParams.set('account', cleanHandle);
         response = await fetch(url.toString(), { method: 'GET', headers, signal: controller.signal });
         responseText = await response.text().catch(() => '');
       }
